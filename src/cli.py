@@ -36,7 +36,7 @@ def cli() -> None:
 
 @cli.command()
 @click.argument("source")
-@click.option("--limit", type=int, default=None, help="Max videos to discover")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max videos to discover")
 def discover(source: str, limit: int | None) -> None:
     """Discover videos from a playlist URL or text file."""
     run_discovery(source, limit=limit)
@@ -52,23 +52,29 @@ def transcripts(force: bool) -> None:
 @cli.command()
 def cost() -> None:
     """Estimate cost for AI analysis."""
-    run_cost_estimate()
+    try:
+        run_cost_estimate()
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command()
-@click.option("--limit", type=int, default=None, help="Limit to N videos (dry-run)")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Maximum number of videos in this analysis batch")
 @click.option("--force", is_flag=True, help="Re-analyze videos")
 def analyze(limit: int | None, force: bool) -> None:
     """Run AI analysis on videos with transcripts.
 
-    Use --limit to run a small dry-run before full processing.
+    Use --limit to set the maximum number of videos in this batch.
     """
     if limit is None:
         limit = Config.DRY_RUN_LIMIT
-        console.print(f"[yellow]Using default dry-run limit of {limit} videos.[/yellow]")
-        console.print("[yellow]Add --limit N to process more, or --limit 9999 for all.[/yellow]")
+        console.print(f"[yellow]Using the default batch limit of {limit} videos.[/yellow]")
+        console.print("[yellow]Add --limit N to change the batch size.[/yellow]")
 
-    run_analysis(dry_run_limit=limit, force=force)
+    try:
+        run_analysis(dry_run_limit=limit, force=force)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command()

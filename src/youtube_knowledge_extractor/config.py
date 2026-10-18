@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,6 +31,28 @@ class Config:
     SPENDING_LIMIT_USD: float = float(os.getenv("SPENDING_LIMIT_USD", "5.0"))
     DRY_RUN_LIMIT: int = int(os.getenv("DRY_RUN_LIMIT", "5"))
     RATE_LIMIT_SECONDS: float = float(os.getenv("RATE_LIMIT_SECONDS", "1.0"))
+    LLM_INPUT_COST_PER_MILLION = os.getenv("LLM_INPUT_COST_PER_MILLION", "").strip() or None
+    LLM_OUTPUT_COST_PER_MILLION = os.getenv("LLM_OUTPUT_COST_PER_MILLION", "").strip() or None
+    LLM_REASONING_EFFORT: str = os.getenv("LLM_REASONING_EFFORT", "").strip()
+    LLM_MAX_OUTPUT_TOKENS: int = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4096"))
+
+    @classmethod
+    def validate(cls) -> None:
+        for name, value in (("SPENDING_LIMIT_USD", cls.SPENDING_LIMIT_USD), ("RATE_LIMIT_SECONDS", cls.RATE_LIMIT_SECONDS)):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
+        if cls.DRY_RUN_LIMIT < 1 or cls.LLM_MAX_OUTPUT_TOKENS < 1:
+            raise ValueError("DRY_RUN_LIMIT and LLM_MAX_OUTPUT_TOKENS must be at least 1")
+        rates = (cls.LLM_INPUT_COST_PER_MILLION, cls.LLM_OUTPUT_COST_PER_MILLION)
+        if (rates[0] is None) != (rates[1] is None):
+            raise ValueError("Configure both LLM_INPUT_COST_PER_MILLION and LLM_OUTPUT_COST_PER_MILLION")
+        for value in rates:
+            if value is not None and (not math.isfinite(float(value)) or float(value) < 0):
+                raise ValueError("LLM cost rates must be finite and nonnegative")
+        if cls.LLM_REASONING_EFFORT and cls.LLM_REASONING_EFFORT not in {"low", "medium", "high", "xhigh"}:
+            raise ValueError("LLM_REASONING_EFFORT must be low, medium, high, or xhigh")
+        if "qwen3.8-27b-fp8" in cls.get_llm_model().lower() and cls.LLM_REASONING_EFFORT == "high":
+            raise ValueError("Qwen3.8-27B-FP8 does not support high reasoning effort")
 
     # Paths
     DATA_DIR: Path = Path("data")

@@ -28,6 +28,8 @@ env/
 
 # Environment variables
 .env
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -40,17 +42,14 @@ watch-later.txt
 .DS_Store
 Thumbs.db
 
-# Data (except structure)
-data/*.db
-data/cache/*
-data/transcripts/*
-data/analyses/*
-data/exports/*
+# Local databases, journals, transcripts and exports
+data/
 
 # Jupyter
 .ipynb_checkpoints/
 
 # pytest
 .pytest_cache/
+.pytest-tmp/
 .coverage
 htmlcov/
