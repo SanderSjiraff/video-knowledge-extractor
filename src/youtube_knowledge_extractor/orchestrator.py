@@ -17,6 +17,7 @@ from youtube_knowledge_extractor.db import (
 )
 from youtube_knowledge_extractor.discovery import discover_playlist
 from youtube_knowledge_extractor.transcripts import fetch_transcript, process_transcripts
+from youtube_knowledge_extractor.whisper_transcripts import process_whisper_transcripts
 from youtube_knowledge_extractor.analysis import analyze_video, estimate_analysis_cost
 from youtube_knowledge_extractor.models import Video, VideoAnalysis, VideoStatus
 
@@ -52,6 +53,27 @@ def run_transcripts(videos: list[Video] | None = None, force: bool = False) -> d
     results = process_transcripts(videos, force=force)
     console.print(
         f"[green]Transcripts: {results['success']} OK, {results['failed']} failed[/green]"
+    )
+    return results
+
+
+def run_whisper_transcripts(
+    videos: list[Video] | None = None,
+    model_size: str = "medium",
+    force: bool = False,
+    keep_audio: bool = True,
+) -> dict[str, int]:
+    """Run Phase 2b: local Whisper transcription (no YouTube subtitle API needed)."""
+    console.print("\n[bold blue]Phase 2b: Local Whisper Transcription (audio + GPU)[/bold blue]")
+    if videos is None:
+        videos = get_all_videos(data_dir=Config.DATA_DIR)
+        videos = [v for v in videos if v.status != VideoStatus.INACCESSIBLE]
+
+    results = process_whisper_transcripts(
+        videos, model_size=model_size, force=force, keep_audio=keep_audio
+    )
+    console.print(
+        f"[green]Whisper transcripts: {results['success']} OK, {results['failed']} failed[/green]"
     )
     return results
 

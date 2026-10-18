@@ -23,6 +23,7 @@ cp .env.example .env   # then edit .env
 |---------|--------------|
 | `discover <source>` | Pull video metadata from a playlist URL or a text file (one URL per line). Use `--limit N` to restrict.
 | `transcripts` | Download subtitles (auto‑fallback to `yt‑dlp` when blocked). Use `--force` to re‑fetch.
+| `transcribe [SOURCE]` | Local fallback when the subtitle API is IP‑blocked: download each video's audio with `yt‑dlp` and transcribe it with **Whisper** (GPU/CUDA). Options: `--model` (`tiny`/`base`/`small`/`medium`/`large-v3`, default `medium`), `--force`, `--no-keep-audio`. Writes `.txt` + `.srt` to `data/transcripts/`.
 | `cost` | Show token & USD estimate for AI analysis.
 | `analyze` | Run the LLM on transcripts (dry‑run defaults to 5 videos). Use `--limit N` for more or `--force` to re‑analyze.
 | `dashboard` | Launch the Streamlit UI.
@@ -70,3 +71,13 @@ youtube-knowledge-extractor/
 | `LLM_REASONING_EFFORT` | Reasoning effort for models like Qwen (`xhigh`, `medium`, `low`) |
 
 
+
+### YouTube cookies
+
+Pass a Netscape cookies export to the transcript fallback:
+
+```powershell
+python src/cli.py transcripts --cookies "../cookies.txt"
+```
+
+You can also set `YOUTUBE_COOKIES_FILE`. Keep this login file private.

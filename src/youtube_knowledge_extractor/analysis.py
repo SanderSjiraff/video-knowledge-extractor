@@ -116,6 +116,9 @@ def _call_openai_compatible(prompt: str, model: str) -> dict[str, Any]:
         "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
+    # Add reasoning_effort for models that support it (e.g., Qwen)
+    if "qwen" in model.lower():
+        payload["reasoning_effort"] = Config.LLM_REASONING_EFFORT
 
     resp = requests.post(
         Config.LLM_API_URL,

@@ -54,3 +54,7 @@ data/exports/*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Exported login cookies
+cookies.txt
+*.cookies.txt

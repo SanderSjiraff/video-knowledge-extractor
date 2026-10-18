@@ -11,6 +11,14 @@ from rich.console import Console
 # Ensure src directory is on path so package imports work
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Force UTF-8 I/O so emoji in video titles don't crash the Windows console
+# (which defaults to cp1252). Harmless on other platforms.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from youtube_knowledge_extractor.config import Config
 from youtube_knowledge_extractor.db import init_db
 from youtube_knowledge_extractor.orchestrator import (
@@ -19,6 +27,7 @@ from youtube_knowledge_extractor.orchestrator import (
     run_dashboard,
     run_discovery,
     run_transcripts,
+    run_whisper_transcripts,
     print_status,
 )
 
@@ -44,9 +53,36 @@ def discover(source: str, limit: int | None) -> None:
 
 @cli.command()
 @click.option("--force", is_flag=True, help="Re-fetch all transcripts")
-def transcripts(force: bool) -> None:
+@click.option("--cookies", type=click.Path(exists=True, dir_okay=False, readable=True),
+              envvar="YOUTUBE_COOKIES_FILE", help="Netscape cookies file for yt-dlp")
+def transcripts(force: bool, cookies: str | None) -> None:
     """Extract transcripts for discovered videos."""
+    Config.COOKIES_FILE = cookies
     run_transcripts(force=force)
+
+
+@cli.command()
+@click.argument("source", required=False)
+@click.option("--model", default="medium",
+              help="Whisper model size: tiny, base, small, medium, large-v3 (default: medium)")
+@click.option("--force", is_flag=True, help="Re-transcribe even if a transcript exists")
+@click.option("--no-keep-audio", is_flag=True, help="Delete downloaded audio after transcribing")
+def transcribe(source: str | None, model: str, force: bool, no_keep_audio: bool) -> None:
+    """Transcribe videos locally with Whisper (audio download + GPU).
+
+    Use this when YouTube's subtitle API is blocked. Works on videos already
+    discovered in the DB, or discover first from SOURCE (playlist URL or a
+    text file with one URL per line).
+    """
+    videos = None
+    if source:
+        videos = run_discovery(source)
+    run_whisper_transcripts(
+        videos=videos,
+        model_size=model,
+        force=force,
+        keep_audio=not no_keep_audio,
+    )
 
 
 @cli.command()

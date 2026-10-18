@@ -58,6 +58,8 @@ def _fetch_with_ytdlp(video_id: str) -> Optional[Transcript]:
                 "--quiet",
                 url,
             ]
+            if Config.COOKIES_FILE:
+                cmd[3:3] = ["--cookies", str(Config.COOKIES_FILE)]
             result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
             if result.returncode != 0:
                 continue

@@ -20,6 +20,8 @@ class Config:
     LLM_API_URL: str = os.getenv("LLM_API_URL", "https://api.openai.com/v1/chat/completions")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    # Reasoning effort for models that support it (e.g., Qwen)
+    LLM_REASONING_EFFORT: str = os.getenv("LLM_REASONING_EFFORT", "xhigh")
 
     # Ollama local mode
     USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "false").lower() == "true"
@@ -31,16 +33,19 @@ class Config:
     DRY_RUN_LIMIT: int = int(os.getenv("DRY_RUN_LIMIT", "5"))
     RATE_LIMIT_SECONDS: float = float(os.getenv("RATE_LIMIT_SECONDS", "1.0"))
 
+    COOKIES_FILE: str | None = os.getenv("YOUTUBE_COOKIES_FILE")
+
     # Paths
     DATA_DIR: Path = Path("data")
     CACHE_DIR: Path = Path("data/cache")
     TRANSCRIPTS_DIR: Path = Path("data/transcripts")
     ANALYSES_DIR: Path = Path("data/analyses")
     EXPORTS_DIR: Path = Path("data/exports")
+    AUDIO_DIR: Path = Path("data/audio")
 
     @classmethod
     def ensure_dirs(cls) -> None:
-        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR]:
+        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR, cls.AUDIO_DIR]:
             d.mkdir(parents=True, exist_ok=True)
 
     @classmethod
