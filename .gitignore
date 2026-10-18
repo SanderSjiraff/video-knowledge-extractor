@@ -36,6 +36,7 @@ env/
 *.swo
 
 # OS
+watch-later.txt
 .DS_Store
 Thumbs.db
 
