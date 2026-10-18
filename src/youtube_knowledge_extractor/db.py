@@ -91,14 +91,23 @@ def init_db(data_dir: Path = Path("data")) -> None:
 
 
 def save_video(video: Video, data_dir: Path = Path("data")) -> None:
-    """Insert or replace a video record."""
+    """Insert a video or refresh metadata without resetting processing state."""
     with get_connection(data_dir) as conn:
         conn.execute(
             """
-            INSERT OR REPLACE INTO videos
+            INSERT INTO videos
             (video_id, title, url, duration_seconds, channel, playlist_order,
              status, created_at, updated_at, error_message)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                title = CASE WHEN excluded.title = '' THEN videos.title ELSE excluded.title END,
+                url = excluded.url,
+                duration_seconds = CASE WHEN excluded.duration_seconds = 0 THEN videos.duration_seconds ELSE excluded.duration_seconds END,
+                channel = CASE WHEN excluded.channel = '' THEN videos.channel ELSE excluded.channel END,
+                playlist_order = excluded.playlist_order,
+                updated_at = excluded.updated_at,
+                status = CASE WHEN videos.status = 'inaccessible' AND excluded.status = 'discovered' THEN excluded.status ELSE videos.status END,
+                error_message = CASE WHEN videos.status = 'inaccessible' AND excluded.status = 'discovered' THEN NULL ELSE videos.error_message END
             """,
             (
                 video.video_id,
@@ -134,6 +143,11 @@ def get_all_videos(data_dir: Path = Path("data")) -> list[Video]:
         return [_row_to_video(row) for row in rows]
 
 
+def get_analyzed_video_ids(data_dir: Path = Path("data")) -> set[str]:
+    with get_connection(data_dir) as conn:
+        return {row[0] for row in conn.execute("SELECT video_id FROM analyses")}
+
+
 def update_video_status(
     video_id: str,
     status: VideoStatus,
@@ -153,7 +167,7 @@ def update_video_status(
             )
         else:
             conn.execute(
-                "UPDATE videos SET status = ?, updated_at = ? WHERE video_id = ?",
+                "UPDATE videos SET status = ?, updated_at = ?, error_message = NULL WHERE video_id = ?",
                 (status.value, datetime.utcnow().isoformat(), video_id),
             )
         conn.commit()
