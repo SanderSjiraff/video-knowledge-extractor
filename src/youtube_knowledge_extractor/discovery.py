@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from typing import Any
 
@@ -13,14 +14,29 @@ from .db import save_video
 from .models import Video, VideoStatus
 
 
-YOUTUBE_URL_RE = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"
-)
-
-
 def extract_video_id(url: str) -> str | None:
-    match = YOUTUBE_URL_RE.search(url)
-    return match.group(1) if match else None
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if host == "youtu.be":
+        candidate = parsed.path.strip("/").split("/")[0]
+    elif host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        parts = [part for part in parsed.path.split("/") if part]
+        if parsed.path == "/watch":
+            candidate = parse_qs(parsed.query).get("v", [""])[0]
+        elif len(parts) == 2 and parts[0] in {"shorts", "embed", "live"}:
+            candidate = parts[1]
+        else:
+            return None
+    else:
+        return None
+    return candidate if re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate) else None
+
+
+def _validate_limit(limit: int | None) -> None:
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
 
 
 def parse_duration_to_seconds(duration_str: str | None) -> int:
@@ -58,6 +74,12 @@ def discover_from_ytdlp(
     limit: int | None = None,
 ) -> list[Video]:
     """Use yt-dlp to list videos in a playlist without downloading."""
+    _validate_limit(limit)
+    parsed = urlparse(playlist_url)
+    if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower().removeprefix("www.") not in {
+        "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"
+    }:
+        raise ValueError("source must be an HTTP(S) YouTube URL or an existing text file")
     cmd = [
         sys.executable, "-m", "yt_dlp",
         "--flat-playlist",
@@ -65,22 +87,26 @@ def discover_from_ytdlp(
         "--quiet",
         playlist_url,
     ]
-    if limit:
+    if limit is not None:
         cmd.extend(["--playlist-end", str(limit)])
 
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=300)
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed: {result.stderr}")
 
     import json
     data = json.loads(result.stdout)
-    entries = data.get("entries", [])
+    entries = data.get("entries")
+    if entries is None:
+        entries = [data] if data.get("id") else []
     videos: list[Video] = []
     seen_ids: set[str] = set()
 
     for idx, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
         vid = entry.get("id")
-        if not vid or vid in seen_ids:
+        if not isinstance(vid, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", vid) or vid in seen_ids:
             continue
         seen_ids.add(vid)
         duration = entry.get("duration")
@@ -103,10 +129,9 @@ def discover_from_ytdlp(
     return videos
 
 
-def discover_from_file(
-    filepath: Path,
-) -> list[Video]:
+def discover_from_file(filepath: Path, limit: int | None = None) -> list[Video]:
     """Read a text file with one YouTube URL per line."""
+    _validate_limit(limit)
     lines = filepath.read_text(encoding="utf-8").splitlines()
     videos: list[Video] = []
     seen_ids: set[str] = set()
@@ -133,6 +158,8 @@ def discover_from_file(
                 status=VideoStatus.DISCOVERED,
             )
         )
+        if limit is not None and len(videos) >= limit:
+            break
 
     return videos
 
@@ -145,7 +172,7 @@ def enrich_video_metadata(video: Video) -> Video:
         "--quiet",
         video.url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
     if result.returncode != 0:
         video.status = VideoStatus.INACCESSIBLE
         video.error_message = result.stderr.strip()[:500]
@@ -177,9 +204,10 @@ def discover_playlist(
     Returns:
         List of discovered Video objects.
     """
+    _validate_limit(limit)
     source_path = Path(source)
     if source_path.exists() and source_path.is_file():
-        videos = discover_from_file(source_path)
+        videos = discover_from_file(source_path, limit=limit)
     else:
         videos = discover_from_ytdlp(source, limit=limit)
 

@@ -12,7 +12,9 @@ from rich.table import Table
 from youtube_knowledge_extractor.config import Config
 from youtube_knowledge_extractor.db import (
     get_all_videos,
+    get_analyzed_video_ids,
     get_progress_stats,
+    get_transcript,
     init_db,
 )
 from youtube_knowledge_extractor.discovery import discover_playlist
@@ -81,6 +83,7 @@ def run_whisper_transcripts(
 def run_cost_estimate(videos: list[Video] | None = None) -> dict[str, Any]:
     """Estimate total cost for analyzing all videos with transcripts."""
     console.print("\n[bold blue]Cost Estimation[/bold blue]")
+    Config.validate()
     if videos is None:
         videos = get_all_videos(data_dir=Config.DATA_DIR)
 
@@ -113,7 +116,7 @@ def run_cost_estimate(videos: list[Video] | None = None) -> dict[str, Any]:
         "videos_ready": count,
         "tokens_in": total_in,
         "tokens_out": total_out,
-        "estimated_cost_usd": round(total_cost, 4),
+        "estimated_cost_usd": total_cost,
         "spending_limit_usd": Config.SPENDING_LIMIT_USD,
         "model": model,
     }
@@ -126,23 +129,23 @@ def run_analysis(
 ) -> list[VideoAnalysis]:
     """Run Phase 3: AI analysis."""
     console.print("\n[bold blue]Phase 3: AI Analysis[/bold blue]")
+    Config.validate()
+    if dry_run_limit is not None and dry_run_limit < 1:
+        raise ValueError("limit must be at least 1")
     if videos is None:
         videos = get_all_videos(data_dir=Config.DATA_DIR)
 
     # Only analyze videos with transcripts
-    eligible = [
-        v for v in videos
-        if v.status in (
-            VideoStatus.TRANSCRIPT_OK,
-            VideoStatus.ANALYSIS_PENDING,
-            VideoStatus.ANALYSIS_OK,
-            VideoStatus.ANALYSIS_FAILED,
-        )
-    ]
+    eligible = [v for v in videos if v.status != VideoStatus.INACCESSIBLE
+                and get_transcript(v.video_id, data_dir=Config.DATA_DIR) is not None]
 
-    if dry_run_limit:
+    if not force:
+        analyzed_ids = get_analyzed_video_ids(data_dir=Config.DATA_DIR)
+        eligible = [v for v in eligible if v.video_id not in analyzed_ids]
+
+    if dry_run_limit is not None:
         eligible = eligible[:dry_run_limit]
-        console.print(f"[yellow]Dry-run mode: analyzing first {dry_run_limit} videos[/yellow]")
+        console.print(f"[yellow]Batch limit: analyzing at most {dry_run_limit} videos[/yellow]")
 
     if not eligible:
         console.print("[yellow]No videos with transcripts ready for analysis.[/yellow]")
@@ -212,6 +215,10 @@ def run_analysis(
                         analysis.estimated_tokens_out,
                     ),
                 )
+                conn.execute(
+                    "UPDATE videos SET status = ?, updated_at = ?, error_message = NULL WHERE video_id = ?",
+                    (VideoStatus.ANALYSIS_OK.value, analysis.analyzed_at.isoformat(), analysis.video_id),
+                )
                 conn.commit()
 
     console.print(f"[green]Analyzed {len(analyses)} / {len(eligible)} videos[/green]")
@@ -227,7 +234,7 @@ def run_dashboard() -> None:
     console.print("[bold blue]Launching Streamlit dashboard...[/bold blue]")
     subprocess.run(
         [sys.executable, "-m", "streamlit", "run", str(dashboard_path)],
-        check=False,
+        check=True,
     )
 
 

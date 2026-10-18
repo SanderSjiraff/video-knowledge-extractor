@@ -8,12 +8,15 @@ from pathlib import Path
 
 import streamlit as st
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from youtube_knowledge_extractor.config import Config
 from youtube_knowledge_extractor.db import (
     get_all_videos,
     get_progress_stats,
     get_transcript,
     get_connection,
+    init_db,
 )
 from youtube_knowledge_extractor.models import VideoStatus
 
@@ -23,6 +26,8 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide",
 )
+Config.ensure_dirs()
+init_db(data_dir=Config.DATA_DIR)
 
 
 def _load_analysis(video_id: str):
@@ -98,7 +103,7 @@ def render_overview():
         return
 
     st.subheader("Videoer")
-    search = st.text_input("Søk etter tittel, kanal eller nøkkelord", "")
+    search = st.text_input("Søk etter tittel eller kanal", "")
     status_filter = st.multiselect(
         "Filtrer etter status",
         options=list(VideoStatus),
@@ -167,7 +172,7 @@ def render_ranking():
 
 def render_topics():
     st.title("📚 Temaer")
-    st.info("Tema-klyngevisning krever flere analyser. Kjør analyse først.")
+    st.info("Temaklyngevisning er ikke implementert ennå.")
 
 
 def render_exports():
