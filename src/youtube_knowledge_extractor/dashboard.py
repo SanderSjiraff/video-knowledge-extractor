@@ -21,6 +21,7 @@ from youtube_knowledge_extractor.db import (
     load_synthesis,
 )
 from youtube_knowledge_extractor.models import VideoStatus
+from youtube_knowledge_extractor.notes import export_markdown
 from youtube_knowledge_extractor.orchestrator import run_synthesis
 
 
@@ -318,6 +319,13 @@ def render_exports():
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         st.success(f"Eksportert til {path}")
         st.download_button("Last ned JSON", path.read_text(encoding="utf-8"), "knowledge.json")
+
+    if st.button("Eksportér Markdown"):
+        md_files = export_markdown(data_dir=Config.DATA_DIR)
+        st.success(
+            f"Eksportert {len(md_files)} Markdown-filer til {Config.EXPORTS_DIR / 'markdown'} "
+            "(Obsidian/OpenCode-vennlig, med kildelenker til YouTube)."
+        )
 
 
 PAGES = {

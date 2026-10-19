@@ -21,6 +21,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from youtube_knowledge_extractor.config import Config
 from youtube_knowledge_extractor.db import init_db
+from youtube_knowledge_extractor.notes import export_markdown
 from youtube_knowledge_extractor.orchestrator import (
     run_analysis,
     run_cost_estimate,
@@ -124,6 +125,16 @@ def synthesize(force: bool) -> None:
         raise click.ClickException(str(exc)) from exc
     if result:
         console.print(f"[green]Saved synthesis for {len(result.get('video_ids', []))} videos.[/green]")
+
+
+@cli.command()
+def export() -> None:
+    """Export notes as Markdown with source deep-links (Obsidian/OpenCode-friendly)."""
+    files = export_markdown(data_dir=Config.DATA_DIR)
+    out_dir = Config.EXPORTS_DIR / "markdown"
+    console.print(f"[green]Exported {len(files)} Markdown files to {out_dir}[/green]")
+    for f in files:
+        console.print(f"  {f.name}")
 
 
 @cli.command()
