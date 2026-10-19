@@ -145,15 +145,22 @@ def build_video_digests(
     video_meta: dict[str, dict[str, Any]] | None = None,
     max_insights: int = 6,
     max_techniques: int = 10,
+    id_labels: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Compact per-video digests used as the synthesis prompt's source material."""
+    """Compact per-video digests used as the synthesis prompt's source material.
+
+    ``id_labels`` optionally maps each real video id to a short label (e.g.
+    ``V01``) used in the prompt instead of the 11-char YouTube id, which the
+    model otherwise garbles by blending similar-looking ids together.
+    """
     video_meta = video_meta or {}
+    id_labels = id_labels or {}
     digests: list[dict[str, Any]] = []
     for a in analyses:
         meta = video_meta.get(a.video_id, {})
         digests.append(
             {
-                "video_id": a.video_id,
+                "video_id": id_labels.get(a.video_id, a.video_id),
                 "title": meta.get("title", a.video_id),
                 "summary_no": a.summary_no,
                 "recommendation": a.recommendation,
@@ -249,7 +256,41 @@ def synthesize_playlist(
     """
     if len(analyses) < 2:
         raise ValueError("Need at least two analyzed videos to synthesize a playlist")
-    prompt = _synthesis_prompt(build_video_digests(analyses, video_meta))
-    raw = call_llm(prompt, model)
-    validate_synthesis_payload(raw, {a.video_id for a in analyses})
-    return raw
+    # Short V## labels in the prompt prevent the model from garbling the long,
+    # similar-looking 11-char video ids; they are mapped back afterwards.
+    id_labels = {a.video_id: f"V{i:02d}" for i, a in enumerate(analyses, 1)}
+    label_to_id = {label: vid for vid, label in id_labels.items()}
+    prompt = _synthesis_prompt(build_video_digests(analyses, video_meta, id_labels=id_labels))
+    video_ids = {a.video_id for a in analyses}
+    last_error: ValueError | None = None
+    # LLM output can be flaky, so retry a few times before giving up instead
+    # of failing the whole synthesis on one malformed response.
+    for _attempt in range(3):
+        raw = call_llm(prompt, model)
+        _map_synthesis_labels(raw, label_to_id)
+        try:
+            validate_synthesis_payload(raw, video_ids)
+        except ValueError as exc:
+            last_error = exc
+            continue
+        return raw
+    raise ValueError(f"Synthesis response invalid after 3 attempts: {last_error}")
+
+
+def _map_synthesis_labels(raw: Any, label_to_id: dict[str, str]) -> None:
+    """Replace short V## labels with real video ids in the raw payload (in place)."""
+    if not isinstance(raw, dict):
+        return
+
+    def fix(value: Any) -> Any:
+        return label_to_id.get(value, value) if isinstance(value, str) else value
+
+    for c in raw.get("contradictions") or []:
+        if isinstance(c, dict) and isinstance(c.get("videos"), list):
+            c["videos"] = [fix(v) for v in c["videos"]]
+    for u in raw.get("unique_knowledge") or []:
+        if isinstance(u, dict):
+            u["video_id"] = fix(u.get("video_id"))
+    for w in raw.get("watch_order") or []:
+        if isinstance(w, dict):
+            w["video_id"] = fix(w.get("video_id"))

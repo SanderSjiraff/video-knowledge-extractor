@@ -1,4 +1,4 @@
-"""Dataclasses for the YouTube Knowledge Extractor."""
+"""Dataclasses for the Video Knowledge Extractor."""
 
 from __future__ import annotations
 

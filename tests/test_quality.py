@@ -15,8 +15,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, db, embeddings, notes, vision, visual
-from youtube_knowledge_extractor.models import (
+from video_knowledge_extractor import analysis, db, embeddings, notes, vision, visual
+from video_knowledge_extractor.models import (
     Insight,
     Transcript,
     TranscriptSegment,

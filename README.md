@@ -1,14 +1,14 @@
-# YouTube Knowledge Extractor
+# Video Knowledge Extractor
 
-Et Python-verktøy som henter videometadata og tilgjengelige undertekster fra YouTube, lager norske analyseutkast med en språkmodell og viser resultatene lokalt med Streamlit. Data lagres i SQLite og JSON på maskinen din.
+Et Python-verktøy som henter videometadata og tilgjengelige undertekster fra **YouTube, TikTok og Instagram**, lager norske analyseutkast med en språkmodell og viser resultatene lokalt med Streamlit. Data lagres i SQLite og JSON på maskinen din.
 
 ## Installasjon
 
 Du trenger Python 3.10 eller nyere, nettverk for YouTube-innhenting og enten lokal Ollama eller et OpenAI-kompatibelt Chat Completions-endepunkt.
 
 ```sh
-git clone https://github.com/SanderSjiraff/youtube-knowledge-extractor.git
-cd youtube-knowledge-extractor
+git clone https://github.com/SanderSjiraff/video-knowledge-extractor.git
+cd video-knowledge-extractor
 python -m venv .venv
 ```
 
@@ -117,8 +117,8 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - **YouTube, TikTok og Instagram**: oppdagelse og transkribering støtter alle tre. YouTube kan bruke undertekster (`transcripts`) eller Whisper (`transcribe`). TikTok/Instagram har ingen undertekst-API, så `transcripts` hoppes over automatisk for disse — bruk `transcribe` (Whisper) der. Kildelenker i notatene er plattform-tilpasset: YouTube har tidsstempel-dype-lenker, mens TikTok/Instagram lenker til den originale URL-en (uten hopp). Instagram kan kreve cookies (sett `YOUTUBE_COOKIES_FILE`).
-- **Tekst på skjermen (OCR)**: pipeline-en leser som standard **kun lyden**, så tekst/kode/tall som *vises* på skjermen går ellers tapt. `screen-text` dekker dette ved å laste ned videoen, uttrekke frames med ffmpeg og kjøre OCR. Den er **valgfri** (opt-in) og legger ingen omkostninger på den vanlige lyd-banen: tunge avhengigheter (OCR-motoren) importeres bare når funksjonen brukes, og videoen slettes etterpå med mindre `--keep-media` brukes. Fanges teksten, meldes den inn i analysen som en egen kanal («TEKST PÅ SKJERMEN») — bare for videoer som faktisk har fanget skjermt tekst. Kjør `screen-text` **før** `analyze` dersom du vil at OCR-teksten skal tas med.
-- **Forståelse av skjermen (visjonsmodell)**: OCR leser bare tekst. `describe-frames` går et steg videre og spør en multimodal modell om å *beskrive* hva som vises (kode-layout, diagrammer, UI), noe OCR ikke greier. Den er også **valgfri og kostnadsbegrenset** (maks `VISION_MAX_FRAMES` jevnt fordelt frames per video) for å unngå store visjonskostnader. Standard er **lokal Ollama** (gratis, `VISION_MODEL=llava`); `VISION_PROVIDER=api` bruker et betalt visjons-endepunkt. Beskrivelsene meldes inn i analysen som «BESKRIVELSE AV SKJERMEN» — bare for videoer som faktisk har fanget dem. Kjør `describe-frames` **før** `analyze`.
+- **Tekst på skjermen (OCR)**: pipeline-en leser som standard **kun lyden**, så tekst/kode/tall som *vises* på skjermen går ellers tapt. `screen-text` dekker dette ved å laste ned videoen (begrenset til 720p — mer enn nok for OCR), uttrekke frames med ffmpeg og kjøre OCR. Den er **valgfri** (opt-in) og legger ingen omkostninger på den vanlige lyd-banen: tunge avhengigheter (OCR-motoren) importeres bare når funksjonen brukes, og videoen slettes etterpå med mindre `--keep-media` brukes. Fanges teksten, meldes den inn i analysen som en egen kanal («TEKST PÅ SKJERMEN») — bare for videoer som faktisk har fanget skjermt tekst. Kjør `screen-text` **før** `analyze` dersom du vil at OCR-teksten skal tas med. easyocr bruker GPU automatisk dersom CUDA-versjonen av torch er installert (for Windows: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130`), ellers CPU. Nye yt-dlp-versjoner krever et JavaScript-runtime for videodownloads fra YouTube: `winget install DenoLand.Deno`.
+- **Forståelse av skjermen (visjonsmodell)**: OCR leser bare tekst. `describe-frames` går et steg videre og spør en multimodal modell om å *beskrive* hva som vises (kode-layout, diagrammer, UI), noe OCR ikke greier. Den er også **valgfri og kostnadsbegrenset** (maks `VISION_MAX_FRAMES` jevnt fordelt frames per video) for å unngå store visjonskostnader. Standard er **lokal Ollama** (gratis, `VISION_MODEL=llava`); `VISION_PROVIDER=api` bruker et OpenAI-kompatibelt visjons-endepunkt som mottar bildeinnhold (f.eks. NTNUs gratis IDUN-modeller, eller Ollama som API). Beskrivelsene meldes inn i analysen som «BESKRIVELSE AV SKJERMEN» — bare for videoer som faktisk har fanget dem. Kjør `describe-frames` **før** `analyze`.
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
 
 ## Miljøvariabler
@@ -169,7 +169,7 @@ Testene bruker midlertidige data og erstatter eksterne nettverks- og modellkall.
 
 ```text
 src/cli.py                          Kommandolinje
-src/youtube_knowledge_extractor/
+src/video_knowledge_extractor/
   config.py                         Miljøoppsett
   discovery.py                      Metadata og lenkelister
   transcripts.py                    Undertekster og lokal cache

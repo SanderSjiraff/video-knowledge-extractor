@@ -10,8 +10,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
-from youtube_knowledge_extractor.config import Config
-from youtube_knowledge_extractor.db import (
+from video_knowledge_extractor.config import Config
+from video_knowledge_extractor.db import (
     get_all_analyses,
     get_all_videos,
     get_analyzed_video_ids,
@@ -21,15 +21,15 @@ from youtube_knowledge_extractor.db import (
     load_synthesis,
     save_synthesis,
 )
-from youtube_knowledge_extractor.discovery import discover_playlist
-from youtube_knowledge_extractor.transcripts import fetch_transcript, process_transcripts
-from youtube_knowledge_extractor.whisper_transcripts import process_whisper_transcripts
-from youtube_knowledge_extractor.analysis import analyze_video, estimate_analysis_cost
-from youtube_knowledge_extractor.cross_video import (
+from video_knowledge_extractor.discovery import discover_playlist
+from video_knowledge_extractor.transcripts import fetch_transcript, process_transcripts
+from video_knowledge_extractor.whisper_transcripts import process_whisper_transcripts
+from video_knowledge_extractor.analysis import analyze_video, estimate_analysis_cost
+from video_knowledge_extractor.cross_video import (
     estimate_synthesis_cost,
     synthesize_playlist,
 )
-from youtube_knowledge_extractor.models import Video, VideoAnalysis, VideoStatus
+from video_knowledge_extractor.models import Video, VideoAnalysis, VideoStatus
 
 
 console = Console()
@@ -95,7 +95,7 @@ def run_cost_estimate(videos: list[Video] | None = None) -> dict[str, Any]:
     if videos is None:
         videos = get_all_videos(data_dir=Config.DATA_DIR)
 
-    from youtube_knowledge_extractor.db import get_transcript
+    from video_knowledge_extractor.db import get_transcript
 
     total_cost = 0.0
     total_in = 0
@@ -232,7 +232,7 @@ def run_analysis(
         if analysis:
             analyses.append(analysis)
             # Save to DB
-            from youtube_knowledge_extractor.db import get_connection
+            from video_knowledge_extractor.db import get_connection
             import json as json_mod
             with get_connection(Config.DATA_DIR) as conn:
                 conn.execute(

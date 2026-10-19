@@ -14,3 +14,10 @@ faster-whisper>=1.0.0
 # "cublas64_12.dll is not found":
 # nvidia-cublas-cu12
 # nvidia-cudnn-cu12
+
+# Optional: on-screen text capture ('screen-text'). Also needs ffmpeg on PATH.
+# Uncomment one OCR engine:
+# easyocr            (or: paddleocr + paddlepaddle)
+# easyocr pulls in a CPU-only torch on Windows; for GPU OCR reinstall torch
+# from the CUDA index, e.g.:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130

@@ -1,4 +1,4 @@
-"""Tests for YouTube Knowledge Extractor."""
+"""Tests for Video Knowledge Extractor."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import pytest
 
-from youtube_knowledge_extractor.discovery import (
+from video_knowledge_extractor.discovery import (
     extract_video_id,
     parse_duration_to_seconds,
 )
-from youtube_knowledge_extractor.analysis import estimate_tokens, estimate_analysis_cost
-from youtube_knowledge_extractor.models import Transcript, TranscriptSegment, Video
+from video_knowledge_extractor.analysis import estimate_tokens, estimate_analysis_cost
+from video_knowledge_extractor.models import Transcript, TranscriptSegment, Video
 
 
 def test_extract_video_id_standard() -> None:

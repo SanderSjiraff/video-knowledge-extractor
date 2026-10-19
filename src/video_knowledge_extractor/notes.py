@@ -173,7 +173,7 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
             lines.append(f"- **{start}–{end}**{link}: {sec.get('description', '')}")
 
     lines.append("")
-    lines.append(f"_Generert {datetime.utcnow():%Y-%m-%d %H:%M} av YouTube Knowledge Extractor._")
+    lines.append(f"_Generert {datetime.utcnow():%Y-%m-%d %H:%M} av Video Knowledge Extractor._")
     return "\n".join(lines) + "\n"
 
 
@@ -188,7 +188,7 @@ def playlist_overview_markdown(
     ranked = rank_videos_by_value(analyses)
 
     lines: list[str] = []
-    lines.append("# YouTube Knowledge Extractor — samling")
+    lines.append("# Video Knowledge Extractor — samling")
     lines.append("")
     lines.append(
         f"_Generert {datetime.utcnow():%Y-%m-%d %H:%M} · {len(analyses)} analyserte videoer._"

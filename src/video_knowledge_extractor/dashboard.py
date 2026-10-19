@@ -10,8 +10,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from youtube_knowledge_extractor.config import Config
-from youtube_knowledge_extractor.db import (
+from video_knowledge_extractor.config import Config
+from video_knowledge_extractor.db import (
     get_all_videos,
     get_progress_stats,
     get_transcript,
@@ -20,13 +20,13 @@ from youtube_knowledge_extractor.db import (
     search_transcripts,
     load_synthesis,
 )
-from youtube_knowledge_extractor.models import VideoStatus
-from youtube_knowledge_extractor.notes import export_markdown
-from youtube_knowledge_extractor.orchestrator import run_synthesis
+from video_knowledge_extractor.models import VideoStatus
+from video_knowledge_extractor.notes import export_markdown
+from video_knowledge_extractor.orchestrator import run_synthesis
 
 
 st.set_page_config(
-    page_title="YouTube Knowledge Extractor",
+    page_title="Video Knowledge Extractor",
     page_icon="🧠",
     layout="wide",
 )
@@ -103,7 +103,7 @@ def _ts_to_seconds(ts: str) -> int | None:
 
 
 def render_overview():
-    st.title("🧠 YouTube Knowledge Extractor")
+    st.title("🧠 Video Knowledge Extractor")
     st.markdown("---")
 
     stats = get_progress_stats(data_dir=Config.DATA_DIR)

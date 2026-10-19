@@ -9,8 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, cross_video, db, discovery, orchestrator
-from youtube_knowledge_extractor.models import (
+from video_knowledge_extractor import analysis, cross_video, db, discovery, orchestrator
+from video_knowledge_extractor.models import (
     Insight,
     Transcript,
     TranscriptSegment,
@@ -159,7 +159,7 @@ def test_rediscovery_recovers_inaccessible_video_without_resetting_completed_sta
     assert db.get_video(ready.video_id, tmp_path).status is VideoStatus.ANALYSIS_OK
     assert db.get_transcript(ready.video_id, tmp_path).full_text == "cached"
 
-    import youtube_knowledge_extractor.transcripts as transcripts
+    import video_knowledge_extractor.transcripts as transcripts
     monkeypatch.setattr(transcripts.Config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(transcripts.time, "sleep", lambda _: None)
     fetched = []
@@ -174,6 +174,9 @@ def test_local_and_unknown_model_costs_are_handled_explicitly(monkeypatch):
     monkeypatch.setattr(analysis.Config, "USE_OLLAMA", True)
     assert analysis.estimate_analysis_cost(transcript, model="qwen-local")["estimated_cost_usd"] == 0
     monkeypatch.setattr(analysis.Config, "USE_OLLAMA", False)
+    # Hermetic: pretend no explicit rates are configured (a real .env may set them).
+    monkeypatch.setattr(analysis.Config, "LLM_INPUT_COST_PER_MILLION", None)
+    monkeypatch.setattr(analysis.Config, "LLM_OUTPUT_COST_PER_MILLION", None)
     with pytest.raises(ValueError, match="rate"):
         analysis.estimate_analysis_cost(transcript, model="unknown-remote")
 
@@ -274,7 +277,7 @@ def test_run_analysis_force_ignores_zero_and_negative_limits(monkeypatch, tmp_pa
 
 
 def test_fallback_uses_preferred_manual_caption_and_provenance(monkeypatch, tmp_path):
-    import youtube_knowledge_extractor.transcripts as transcripts
+    import video_knowledge_extractor.transcripts as transcripts
 
     monkeypatch.setattr(transcripts.tempfile, "tempdir", str(tmp_path))
     seen = []
@@ -293,7 +296,7 @@ def test_fallback_uses_preferred_manual_caption_and_provenance(monkeypatch, tmp_
 
 
 def test_cached_transcript_repairs_status_without_downgrading_analysis(tmp_path, monkeypatch):
-    import youtube_knowledge_extractor.transcripts as transcripts
+    import video_knowledge_extractor.transcripts as transcripts
     db.init_db(tmp_path)
     v = video(status=VideoStatus.DISCOVERED)
     db.save_video(v, tmp_path)
@@ -413,7 +416,7 @@ def test_failed_request_attempts_still_observe_rate_limit(monkeypatch):
 
 def test_dashboard_starts_with_fresh_temp_database(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
-    from youtube_knowledge_extractor.config import Config
+    from video_knowledge_extractor.config import Config
     import tempfile
 
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
@@ -422,7 +425,7 @@ def test_dashboard_starts_with_fresh_temp_database(tmp_path, monkeypatch):
     monkeypatch.setattr(Config, "TRANSCRIPTS_DIR", tmp_path / "transcripts")
     monkeypatch.setattr(Config, "ANALYSES_DIR", tmp_path / "analyses")
     monkeypatch.setattr(Config, "EXPORTS_DIR", tmp_path / "exports")
-    app = AppTest.from_file(str(Path(__file__).parent.parent / "src" / "youtube_knowledge_extractor" / "dashboard.py")).run(timeout=10)
+    app = AppTest.from_file(str(Path(__file__).parent.parent / "src" / "video_knowledge_extractor" / "dashboard.py")).run(timeout=10)
     assert not app.exception
 
 

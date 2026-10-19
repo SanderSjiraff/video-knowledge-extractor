@@ -1,4 +1,4 @@
-"""CLI for YouTube Knowledge Extractor."""
+"""CLI for Video Knowledge Extractor."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-from youtube_knowledge_extractor.config import Config
-from youtube_knowledge_extractor.db import init_db
-from youtube_knowledge_extractor.notes import export_markdown
-from youtube_knowledge_extractor.orchestrator import (
+from video_knowledge_extractor.config import Config
+from video_knowledge_extractor.db import init_db
+from video_knowledge_extractor.notes import export_markdown
+from video_knowledge_extractor.orchestrator import (
     run_analysis,
     run_cost_estimate,
     run_dashboard,
@@ -40,7 +40,7 @@ console = Console()
 @click.group()
 @click.version_option(version="1.0.0")
 def cli() -> None:
-    """YouTube Knowledge Extractor — analyze playlists into searchable knowledge."""
+    """Video Knowledge Extractor — analyze playlists into searchable knowledge."""
     init_db(data_dir=Config.DATA_DIR)
     Config.ensure_dirs()
 
@@ -101,8 +101,8 @@ def screen_text(limit: int | None, force: bool, frame_interval: float | None, ke
     appear in the audio. Requires ffmpeg plus an OCR engine
     (``easyocr`` or ``paddleocr``); see OCR_ENGINE in the README.
     """
-    from youtube_knowledge_extractor.db import get_all_videos
-    from youtube_knowledge_extractor.visual import process_on_screen_text
+    from video_knowledge_extractor.db import get_all_videos
+    from video_knowledge_extractor.visual import process_on_screen_text
 
     if frame_interval is not None:
         Config.VISUAL_FRAME_INTERVAL = float(frame_interval)
@@ -143,8 +143,8 @@ def describe_frames(limit: int | None, force: bool, max_frames: int | None, keep
     text; this understands layout/diagrams). Requires ffmpeg plus a vision
     model (local Ollama via VISION_MODEL, or a vision API). See README.
     """
-    from youtube_knowledge_extractor.db import get_all_videos
-    from youtube_knowledge_extractor.vision import process_frame_descriptions
+    from video_knowledge_extractor.db import get_all_videos
+    from video_knowledge_extractor.vision import process_frame_descriptions
 
     if max_frames is not None:
         Config.VISION_MAX_FRAMES = int(max_frames)
@@ -182,8 +182,8 @@ def embed(force: bool, limit: int | None) -> None:
     embedding model (local Ollama by default), so it does not use the analysis
     endpoint.
     """
-    from youtube_knowledge_extractor.db import get_all_videos
-    from youtube_knowledge_extractor.embeddings import process_embeddings
+    from video_knowledge_extractor.db import get_all_videos
+    from video_knowledge_extractor.embeddings import process_embeddings
 
     videos = get_all_videos(data_dir=Config.DATA_DIR)
     videos = [v for v in videos if v.status is not None and str(v.status) != "inaccessible"]
@@ -208,8 +208,8 @@ def embed(force: bool, limit: int | None) -> None:
 @click.option("--top", "top_k", type=click.IntRange(min=1), default=5, help="Number of results")
 def search_semantic(query: str, top_k: int) -> None:
     """Semantic (embedding) search over transcript chunks by meaning."""
-    from youtube_knowledge_extractor.db import get_all_videos
-    from youtube_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
+    from video_knowledge_extractor.db import get_all_videos
+    from video_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
 
     if not embeddings_configured():
         raise click.ClickException("No embedding model configured (set EMBED_MODEL / EMBED_PROVIDER).")

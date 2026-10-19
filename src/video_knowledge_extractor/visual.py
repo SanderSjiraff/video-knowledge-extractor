@@ -50,7 +50,11 @@ def _download_video(video: Video, video_dir: Path) -> Path:
     import yt_dlp
 
     ydl_opts = {
-        "format": "best[ext=mp4]/best",
+        # Many YouTube videos expose only separate video/audio streams, so
+        # prefer merged bestvideo+bestaudio (ffmpeg merges them) and fall
+        # back to a single progressive file when one exists. 720p is plenty
+        # for OCR/vision and keeps downloads small across many videos.
+        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]",
         "outtmpl": str(preferred),
         "quiet": True,
         "noprogress": True,
@@ -105,7 +109,9 @@ def _ocr_easyocr(frame_path: str) -> str:
             "The 'easyocr' OCR engine is not installed. Run: pip install easyocr"
         ) from exc
     if _ocr_reader is None:
-        _ocr_reader = easyocr.Reader(["en"], gpu=True)
+        import torch
+
+        _ocr_reader = easyocr.Reader(["en"], gpu=torch.cuda.is_available())
     results = _ocr_reader.readtext(frame_path)
     return " ".join(r[1] for r in results if r[1] and r[1].strip())
 

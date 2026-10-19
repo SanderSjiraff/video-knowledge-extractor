@@ -1,4 +1,4 @@
-"""Configuration management for YouTube Knowledge Extractor."""
+"""Configuration management for Video Knowledge Extractor."""
 
 from __future__ import annotations
 
