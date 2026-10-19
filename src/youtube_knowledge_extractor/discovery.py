@@ -34,6 +34,21 @@ def extract_video_id(url: str) -> str | None:
     return candidate if re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate) else None
 
 
+def detect_platform(url: str) -> str | None:
+    """Return the platform for a URL: 'youtube', 'tiktok', 'instagram', or None."""
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}:
+        return "youtube"
+    if host == "tiktok.com" or host.endswith(".tiktok.com"):
+        return "tiktok"
+    if host in {"instagram.com", "instagr.am"} or host.endswith(".instagram.com"):
+        return "instagram"
+    return None
+
+
 def _validate_limit(limit: int | None) -> None:
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least 1")
@@ -129,8 +144,32 @@ def discover_from_ytdlp(
     return videos
 
 
+def _yt_dlp_single_video(url: str) -> dict | None:
+    """Fetch a single video's metadata with yt-dlp (any supported platform)."""
+    import json
+
+    cmd = [sys.executable, "-m", "yt_dlp", "--dump-single-json", "--quiet", url]
+    if Config.COOKIES_FILE:
+        cmd.extend(["--cookies", Config.COOKIES_FILE])
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=120)
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return None
+
+
 def discover_from_file(filepath: Path, limit: int | None = None) -> list[Video]:
-    """Read a text file with one YouTube URL per line."""
+    """Read a text file with one video URL per line (YouTube, TikTok, Instagram).
+
+    YouTube URLs are resolved from the URL itself (no network needed).
+    TikTok/Instagram URLs are resolved through yt-dlp so a stable video id
+    can be used as the primary key.
+    """
     _validate_limit(limit)
     lines = filepath.read_text(encoding="utf-8").splitlines()
     videos: list[Video] = []
@@ -141,23 +180,51 @@ def discover_from_file(filepath: Path, limit: int | None = None) -> list[Video]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        vid = extract_video_id(line)
-        if not vid or vid in seen_ids:
+        platform = detect_platform(line)
+        if platform is None:
             continue
-        seen_ids.add(vid)
-        order += 1
-        # We don't know duration/title yet — mark for enrichment
-        videos.append(
-            Video(
-                video_id=vid,
-                title="",
-                url=f"https://www.youtube.com/watch?v={vid}",
-                duration_seconds=0,
-                channel="",
-                playlist_order=order,
-                status=VideoStatus.DISCOVERED,
+
+        if platform == "youtube":
+            vid = extract_video_id(line)
+            if not vid or vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            order += 1
+            # We don't know duration/title yet — mark for enrichment
+            videos.append(
+                Video(
+                    video_id=vid,
+                    title="",
+                    url=f"https://www.youtube.com/watch?v={vid}",
+                    duration_seconds=0,
+                    channel="",
+                    playlist_order=order,
+                    status=VideoStatus.DISCOVERED,
+                    platform="youtube",
+                )
             )
-        )
+        else:
+            # TikTok / Instagram: resolve a stable id via yt-dlp metadata.
+            meta = _yt_dlp_single_video(line)
+            vid = meta.get("id") if meta else None
+            if not isinstance(vid, str) or vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            order += 1
+            duration = meta.get("duration")
+            videos.append(
+                Video(
+                    video_id=vid,
+                    title=meta.get("title", "Untitled") or "Untitled",
+                    url=line,
+                    duration_seconds=int(duration) if isinstance(duration, (int, float)) else 0,
+                    channel=meta.get("channel") or meta.get("uploader") or "Unknown",
+                    playlist_order=order,
+                    status=VideoStatus.DISCOVERED,
+                    platform=platform,
+                )
+            )
+
         if limit is not None and len(videos) >= limit:
             break
 
@@ -211,13 +278,17 @@ def discover_playlist(
     else:
         videos = discover_from_ytdlp(source, limit=limit)
 
-    # If from file, we need metadata; fetch with yt-dlp in batches
+    # If from file, fetch metadata with yt-dlp for entries still missing it
+    # (YouTube URLs have no title yet; TikTok/Instagram were resolved above).
     if source_path.exists():
         from rich.console import Console
         console = Console()
-        console.print(f"[cyan]Enriching metadata for {len(videos)} videos...[/cyan]")
+        to_enrich = [v for v in videos if not v.title]
+        if to_enrich:
+            console.print(f"[cyan]Enriching metadata for {len(to_enrich)} videos...[/cyan]")
         for v in videos:
-            v = enrich_video_metadata(v)
+            if not v.title:
+                v = enrich_video_metadata(v)
             save_video(v, data_dir=data_dir)
     else:
         for v in videos:

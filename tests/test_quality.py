@@ -95,6 +95,35 @@ def test_ts_to_seconds_edge_cases(raw, expected):
     assert notes._ts_to_seconds(raw) == expected
 
 
+def test_source_link_is_platform_aware():
+    yt = Video("abc123", "T", "https://www.youtube.com/watch?v=abc123", 60, "Ch", 1, VideoStatus.ANALYSIS_OK, platform="youtube")
+    tk = Video("777000111222", "T", "https://www.tiktok.com/@u/video/777000111222", 30, "u", 1, VideoStatus.ANALYSIS_OK, platform="tiktok")
+    ig = Video("reelX", "T", "https://www.instagram.com/reel/reelX/", 15, "u", 1, VideoStatus.ANALYSIS_OK, platform="instagram")
+    # YouTube: timestamp deep-jump.
+    assert notes.source_link(yt, "01:30") == "https://www.youtube.com/watch?v=abc123&t=90s"
+    assert notes.source_link(yt) == "https://www.youtube.com/watch?v=abc123"
+    # TikTok / Instagram: original URL, no timestamp jump.
+    assert notes.source_link(tk, "01:30") == "https://www.tiktok.com/@u/video/777000111222"
+    assert notes.source_link(ig) == "https://www.instagram.com/reel/reelX/"
+    assert notes._source_label(tk) == "Se på TikTok"
+    assert notes._source_label(ig) == "Se på Instagram"
+
+
+def test_video_note_for_tiktok_uses_platform_link():
+    v = Video("777000111222", "TikTok clip", "https://www.tiktok.com/@u/video/777000111222", 30, "u", 1, VideoStatus.ANALYSIS_OK, platform="tiktok")
+    a = VideoAnalysis(
+        video_id=v.video_id, summary_no="s",
+        insights=[Insight(insight="x", explanation="e", timestamp="00:05", confidence="high")],
+        relevance_score=3, practical_score=3, redundancy_score=1,
+    )
+    md = notes.video_to_markdown(v, a)
+    assert "platform: tiktok" in md
+    assert "[Se på TikTok](https://www.tiktok.com/@u/video/777000111222)" in md
+    # Insight timestamp link falls back to the original URL (no t= jump).
+    assert "https://www.tiktok.com/@u/video/777000111222" in md
+    assert "&t=" not in md
+
+
 def test_safe_filename_handles_norwegian_and_special_chars():
     assert notes._safe_filename("Bygge en AI-agent") == "Bygge-en-AI-agent"
     assert notes._safe_filename("Å/øå: er tillatt?") == "Å-øå-er-tillatt"

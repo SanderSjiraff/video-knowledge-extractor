@@ -81,6 +81,14 @@ def fetch_transcript(video: Video, force: bool = False) -> Optional[Transcript]:
     Returns Transcript or None if unavailable.
     Caches result in DB and local JSON.
     """
+    # Subtitles are a YouTube-only capability; other platforms use Whisper.
+    if (video.platform or "youtube") != "youtube":
+        console.print(
+            f"  [yellow]{video.video_id} is a {video.platform} video; subtitles are YouTube-only. "
+            f"Use 'transcribe' (Whisper) for this platform.[/yellow]"
+        )
+        return None
+
     # Check cache unless force
     if not force:
         cached = get_transcript(video.video_id, data_dir=Config.DATA_DIR)
@@ -172,6 +180,12 @@ def process_transcripts(videos: list[Video], force: bool = False) -> dict[str, i
     failed = 0
     for video in videos:
         if video.status == VideoStatus.INACCESSIBLE:
+            continue
+        if (video.platform or "youtube") != "youtube":
+            console.print(
+                f"  [yellow]Skipping {video.video_id} ({video.platform}): subtitles are "
+                f"YouTube-only — run 'transcribe' (Whisper) for this platform.[/yellow]"
+            )
             continue
         if not force:
             existing = get_transcript(video.video_id, data_dir=Config.DATA_DIR)

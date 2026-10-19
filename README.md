@@ -79,7 +79,7 @@ python src/cli.py dashboard
 
 | Kommando | Virkning |
 |---|---|
-| `discover <kilde> --limit N` | Henter metadata fra en YouTube-lenke eller tekstfil. Duplikate video-ID-er slås sammen. |
+| `discover <kilde> --limit N` | Henter metadata fra en YouTube-playlist eller en tekstfil med én URL per linje. Støtter også TikTok- og Instagram-URL-er (tekstfil; ID hentes via yt-dlp). Duplikate video-ID-er slås sammen. |
 | `transcripts` | Henter undertekster og gjenbruker lagrede resultater. Prøver `yt-dlp` dersom primærmetoden ikke lykkes. |
 | `transcripts --force` | Henter undertekster på nytt. |
 | `transcribe [KILDE]` | Lokal reserve når YouTube-undertekst-API-et er IP-blokkert: laster ned lyden med `yt-dlp` og transkriberer den lokalt med Whisper (GPU/CUDA). Valg: `--model` (`tiny`/`base`/`small`/`medium`/`large-v3`), `--force`, `--no-keep-audio`. Skriver `.txt` og `.srt` til `data/transcripts/`. |
@@ -111,6 +111,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Markdown-eksporten (`export`, også tilgjengelig som knapp under Eksport i dashboardet) lager ingen modellkall; den formaterer kun lagrede analyser til Obsidian/OpenCode-vennlige notater med kildelenker. Hvert notat har YAML-metadata (frontmatter) med video_id, platform, url, skår og tags for filtrering og parsing. `KUNNSKAP.md` er et kompakt, deduplisert konsentrat beregnet på inntasting som kontekst til en språkmodell. Filnavnet er deterministisk (tittel + video-id), så omgjøring skriver over de samme filene.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
+- **YouTube, TikTok og Instagram**: oppdagelse og transkribering støtter alle tre. YouTube kan bruke undertekster (`transcripts`) eller Whisper (`transcribe`). TikTok/Instagram har ingen undertekst-API, så `transcripts` hoppes over automatisk for disse — bruk `transcribe` (Whisper) der. Kildelenker i notatene er plattform-tilpasset: YouTube har tidsstempel-dype-lenker, mens TikTok/Instagram lenker til den originale URL-en (uten hopp). Instagram kan kreve cookies (sett `YOUTUBE_COOKIES_FILE`).
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
 
 ## Miljøvariabler

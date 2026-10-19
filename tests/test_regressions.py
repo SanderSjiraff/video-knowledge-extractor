@@ -31,6 +31,48 @@ def test_video_url_requires_youtube_host_and_full_id():
     assert discovery.extract_video_id("https://youtube.com/embed/dQw4w9WgXcQ") == "dQw4w9WgXcQ"
 
 
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube"),
+        ("https://youtu.be/dQw4w9WgXcQ", "youtube"),
+        ("https://www.tiktok.com/@user/video/1234567890", "tiktok"),
+        ("https://vm.tiktok.com/ABC123/", "tiktok"),
+        ("https://www.instagram.com/reel/AbCdEf/", "instagram"),
+        ("https://instagr.am/p/xyz/", "instagram"),
+        ("https://example.com/watch?v=abc", None),
+        ("not a url", None),
+    ],
+)
+def test_detect_platform(url, expected):
+    assert discovery.detect_platform(url) == expected
+
+
+def test_discover_from_file_resolves_tiktok_via_ytdlp(tmp_path, monkeypatch):
+    source = tmp_path / "urls.txt"
+    source.write_text(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ\n"
+        "https://www.tiktok.com/@user/video/1234567890\n",
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(
+        discovery,
+        "_yt_dlp_single_video",
+        lambda url: calls.append(url) or {"id": "777000111222", "title": "TikTok clip",
+                                            "channel": "someuser", "duration": 30},
+    )
+    videos = discovery.discover_from_file(source)
+    assert [(v.video_id, v.platform) for v in videos] == [
+        ("dQw4w9WgXcQ", "youtube"),
+        ("777000111222", "tiktok"),
+    ]
+    # Only the non-YouTube URL needed a yt-dlp resolution.
+    assert calls == ["https://www.tiktok.com/@user/video/1234567890"]
+    tiktok = videos[1]
+    assert tiktok.title == "TikTok clip" and tiktok.duration_seconds == 30
+
+
 def test_ytdlp_discovery_rejects_non_youtube_sources_and_invalid_ids(monkeypatch):
     import subprocess
 
@@ -72,6 +114,15 @@ def test_save_video_rediscovery_preserves_processing_state_and_timestamps(tmp_pa
     assert saved.status is VideoStatus.ANALYSIS_OK
     assert saved.created_at == original.created_at
     assert db.get_transcript(original.video_id, tmp_path).full_text == "cached"
+
+
+def test_video_platform_roundtrips_through_db(tmp_path):
+    db.init_db(tmp_path)
+    db.save_video(Video("777000111222", "TikTok", "https://www.tiktok.com/@u/video/777000111222", 30, "u", 1, VideoStatus.DISCOVERED, platform="tiktok"), tmp_path)
+    assert db.get_video("777000111222", tmp_path).platform == "tiktok"
+    # A video saved without an explicit platform defaults to youtube.
+    db.save_video(video(), tmp_path)
+    assert db.get_video("dQw4w9WgXcQ", tmp_path).platform == "youtube"
 
 
 def test_success_status_clears_previous_error(tmp_path):

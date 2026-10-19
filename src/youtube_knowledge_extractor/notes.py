@@ -37,6 +37,25 @@ def deep_link(video_id: str, timestamp: Optional[str]) -> str:
     return f"{base}&t={secs}s" if secs is not None else base
 
 
+def source_link(video: Video, timestamp: Optional[str] = None) -> str:
+    """Platform-aware source link.
+
+    YouTube supports timestamp deep-jumps; other platforms link to the
+    original video URL (no jump).
+    """
+    if (video.platform or "youtube") == "youtube":
+        return deep_link(video.video_id, timestamp)
+    return video.url
+
+
+def _source_label(video: Video) -> str:
+    return {
+        "youtube": "Se på YouTube",
+        "tiktok": "Se på TikTok",
+        "instagram": "Se på Instagram",
+    }.get(video.platform or "youtube", "Åpne kilde")
+
+
 def _confidence_mark(verified: bool, confidence: str, has_quote: bool) -> str:
     if verified:
         return "✅"
@@ -103,7 +122,7 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
         f"- **Skår:** relevans {analysis.relevance_score}/5 · dybde {analysis.depth_score}/5 · "
         f"praktisk {analysis.practical_score}/5 · redundans {analysis.redundancy_score}/5"
     )
-    lines.append(f"- **Video:** [Se på YouTube]({video.url})")
+    lines.append(f"- **Video:** [{_source_label(video)}]({source_link(video)})")
     if analysis.low_confidence:
         lines.append(f"- **Lav konfidens:** {analysis.confidence_reason}")
     lines.append("")
@@ -120,7 +139,7 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
             mark = _confidence_mark(ins.verified, ins.confidence, bool(ins.quote))
             ts_link = ""
             if ins.timestamp:
-                ts_link = f" [⏱ {ins.timestamp}]({deep_link(video.video_id, ins.timestamp)})"
+                ts_link = f" [⏱ {ins.timestamp}]({source_link(video, ins.timestamp)})"
             head = f"{n}. **{ins.insight}**{ts_link}"
             if mark:
                 head += f" {mark}"
@@ -150,7 +169,7 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
         lines.append("")
         for sec in analysis.key_sections:
             start, end = sec.get("start", ""), sec.get("end", "")
-            link = f" [hoppe til]({deep_link(video.video_id, start)})" if start else ""
+            link = f" [hoppe til]({source_link(video, start)})" if start else ""
             lines.append(f"- **{start}–{end}**{link}: {sec.get('description', '')}")
 
     lines.append("")
@@ -195,7 +214,8 @@ def playlist_overview_markdown(
                 vid = u.get("video_id", "")
                 v = video_by_id.get(vid)
                 title = v.title if v else vid
-                lines.append(f"- [{title}]({deep_link(vid, None)}): {u.get('knowledge')}")
+                url = source_link(v) if v else deep_link(vid, None)
+                lines.append(f"- [{title}]({url}): {u.get('knowledge')}")
             lines.append("")
         shared = synthesis.get("shared_topics", [])
         if shared:
