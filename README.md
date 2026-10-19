@@ -85,6 +85,8 @@ python src/cli.py dashboard
 | `transcribe [KILDE]` | Lokal reserve når YouTube-undertekst-API-et er IP-blokkert: laster ned lyden med `yt-dlp` og transkriberer den lokalt med Whisper (GPU/CUDA). Valg: `--model` (`tiny`/`base`/`small`/`medium`/`large-v3`), `--force`, `--no-keep-audio`. Skriver `.txt` og `.srt` til `data/transcripts/`. |
 | `screen-text [--limit N]` | Fanger **visuell informasjon på skjermen**: laster ned videoen, tar ut ett bilde hvert N-te sekund (ffmpeg) og kjører OCR over teksten/koden. Lagrer resultater per video; `analyze` melder den inn som en ekstra kanal i prompten. Krever `ffmpeg` + OCR-motor (`OCR_ENGINE`: `easyocr` eller `paddleocr`). Valg: `--force`, `--frame-interval N`, `--keep-media`. |
 | `describe-frames [--limit N]` | **Forstå** skjermen med en visjonsmodell: uttrekker noen jevnt fordelt frames (ffmpeg) og spør en multimodal modell om å beskrive hva som vises (kode, diagrammer, UI). Supplerer `screen-text` (OCR leser tekst; dette forstår layout). Kostnadsbegrenset: maks `VISION_MAX_FRAMES` frames per video. Krever `ffmpeg` + en visjonsmodell (`VISION_MODEL`; lokal Ollama = gratis, eller `VISION_PROVIDER=api`). Valg: `--force`, `--max-frames N`, `--keep-media`. |
+| `embed [--limit N]` | Bygger **semantisk søk**: embedder transkriptchunks med en liten embeddingsmodell (lokal Ollama som standard) slik at du senere kan hente relevans etter *betydning* i stedet for nøkkelord. Bruker en separat modell — påvirker ikke analyse-kostnaden. Valg: `--force`, `--limit N`. |
+| `search-semantic "SPØRSMÅL" --top N` | Semantisk søk over transkriptchunks: embedder spørringen og rangerer chunks etter cosineslikt. Brukes til konteksthenting (RAG) før du fôrer en modell. |
 | `cost` | Viser et token- og prisestimat uten modellkall. |
 | `analyze --limit N` | Sender inntil N ventende transkripter til modellen. Lagrede analyser hoppes over. |
 | `analyze --limit N --force` | Analyserer også videoer som har en lagret analyse. Dette kan koste på nytt. |
@@ -109,6 +111,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Lange transkripter deles i overlappende deler som analyseres hver for seg og slås sammen (map-reduce), slik at hele videoen dekkes uten avkorting. Antall deler – og dermed modellkall og kostnad – øker med videoens lengde; kortere videoer bruker fortsatt ett enkelt kall.
 - Hvert innsikt ber modellen om et kort sitat fra transkriptet. Sitater som ikke finnes i transkriptet markeres ⚠️ og senkes til lav konfidens (sannsynlig hallusinasjon), og tidsstempler som ligger langt fra sitatets faktiske plass justeres automatisk. Dashboardet viser tidsstempler som klikkbare YouTube-lenker.
 - Fulltekst-søket (Søk i dashboardet) bruker SQLite FTS5 over hele transkriptinnholdet med bm25-rangering og uthevet snutt. Hvis SQLite-bygget mangler FTS5, brukes automatisk delstrekk-søk som reserve. Nye transkripter indekseres ved lagring; eksisterende databaser bygges om ved første søk.
+- **Semantisk søk (embeddings)**: fulltekst-søk matcher nøkkelord. `embed` bygger i tillegg en semantisk indeks ved å embedde transkriptchunks, slik at `search-semantic` kan finne deler etter *betydning* (bra for konteksthenting/RAG). Den bruker en separat, liten embeddingsmodell (lokal Ollama = gratis som standard, `EMBED_MODEL=nomic-embed-text`; `EMBED_PROVIDER=api` for et betalt endepunkt). Den legger ingen omkostninger på analysebanen og krever ingen tunge Python-avhengigheter. Kjør `embed` etter `transcribe`/`transcripts`, før du bruker `search-semantic`.
 - Samlet syntese (Syntese) er ett enkelt modellkall over kompakte per-video-sammendrag og krever minst to analyserte videoer. Den cache-reses i databasen og gjengis uten nytt modellkall med mindre du bruker `--force` eller videosettet har endret seg.
 - Markdown-eksporten (`export`, også tilgjengelig som knapp under Eksport i dashboardet) lager ingen modellkall; den formaterer kun lagrede analyser til Obsidian/OpenCode-vennlige notater med kildelenker. Hvert notat har YAML-metadata (frontmatter) med video_id, platform, url, skår og tags for filtrering og parsing. `KUNNSKAP.md` er et kompakt, deduplisert konsentrat beregnet på inntasting som kontekst til en språkmodell. Filnavnet er deterministisk (tittel + video-id), så omgjøring skriver over de samme filene.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
@@ -142,6 +145,12 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 | `VISION_MODEL` | `llava` – navnet på visjonsmodellen (Ollama: `llava`, `qwen2.5vl`, `llama3.2-vision` ...). |
 | `VISION_MAX_FRAMES` | `6` – øvre grense for antall frames som beskrives per video (begrenser visjonskostnad). |
 | `VISION_API_URL` | Tom som standard – kun for `VISION_PROVIDER=api`; OpenAI-kompatibel Chat Completions-URL (annakun faller tilbake på `LLM_API_URL`). |
+| `EMBED_PROVIDER` | `ollama` – leverandør for `embed`/`search-semantic` (`ollama` = lokal/gratis, `api` = OpenAI-kompatibelt `/embeddings`-endepunkt). |
+| `EMBED_MODEL` | `nomic-embed-text` – embeddingsmodellen (Ollama: `nomic-embed-text`, `mxbai-embed-large`, `all-minilm` ...). |
+| `EMBED_URL` | Tom som standard – Ollama-embeddings-URL; annars utledet fra `OLLAMA_URL`. |
+| `EMBED_API_URL` | Tom som standard – kun for `EMBED_PROVIDER=api`; OpenAI-kompatibel `/embeddings`-URL (annakun `LLM_API_URL`). |
+| `EMBED_API_KEY` | Tom som standard – nøkkel for `EMBED_PROVIDER=api` (annakun `LLM_API_KEY`). |
+| `EMBED_CHUNK_CHARS` | `15000` – chunk-størrelse (i tegn) for embeddings. |
 
 ## Lagring og personvern
 
@@ -167,6 +176,7 @@ src/youtube_knowledge_extractor/
   whisper_transcripts.py            Lokal Whisper-transkribering av lyd (GPU/CUDA)
   visual.py                         On-screen text: frame-uttrekk (ffmpeg) + OCR (valgfri)
   vision.py                         Visjonsmodell-beskrivelse av frames (valgfri, kostnadsbegrenset)
+  embeddings.py                     Semantisk søk: embeddings + cosineslikthet (RAG)
   analysis.py                       Prompt, modellkall, svarbehandling og innsiktsverifisering
   db.py                             SQLite-lagring og FTS5-fulltekst-søk
   orchestrator.py                    Arbeidsflyt og estimatgrense

@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, db, notes, vision, visual
+from youtube_knowledge_extractor import analysis, db, embeddings, notes, vision, visual
 from youtube_knowledge_extractor.models import (
     Insight,
     Transcript,
@@ -709,3 +709,88 @@ def test_describe_frames_collects_and_skips_empty(tmp_path, monkeypatch):
     # The empty description (p1) is skipped; the rest are kept in time order.
     assert [i["description"] for i in items] == ["code on screen", "a diagram"]
     assert [i["time_seconds"] for i in items] == [0.0, 60.0]
+
+
+# ---------------------------------------------------------------------------
+# Embedding-based semantic search (RAG / context retrieval).
+# ---------------------------------------------------------------------------
+
+
+def test_embeddings_roundtrip(tmp_path):
+    db.init_db(tmp_path)
+    db.save_embeddings("abc123", [
+        {"chunk_index": 0, "text": "chunk zero", "vector": [1.0, 0.0]},
+        {"chunk_index": 1, "text": "chunk one", "vector": [0.0, 1.0]},
+    ], data_dir=tmp_path)
+    assert db.has_embeddings("abc123", data_dir=tmp_path) is True
+    assert db.has_embeddings("missing", data_dir=tmp_path) is False
+    all_emb = db.get_all_embeddings(data_dir=tmp_path)
+    assert [(e["video_id"], e["chunk_index"]) for e in all_emb] == [("abc123", 0), ("abc123", 1)]
+    assert all_emb[0]["vector"] == [1.0, 0.0]
+    # Re-saving replaces the previous chunks.
+    db.save_embeddings("abc123", [{"chunk_index": 0, "text": "new", "vector": [0.5, 0.5]}], data_dir=tmp_path)
+    assert len(db.get_all_embeddings(data_dir=tmp_path)) == 1
+    db.clear_embeddings("abc123", data_dir=tmp_path)
+    assert db.get_all_embeddings(data_dir=tmp_path) == []
+
+
+def test_cosine_similarity():
+    assert embeddings._cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert embeddings._cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert embeddings._cosine([1.0, 0.0], [1.0, 1.0]) == pytest.approx(1.0 / 2 ** 0.5)
+    assert embeddings._cosine([], [1.0]) == 0.0
+    assert embeddings._cosine([1.0, 0.0], [1.0]) == 0.0  # length mismatch
+
+
+def test_search_embeddings_ranks_by_similarity(tmp_path, monkeypatch):
+    db.init_db(tmp_path)
+    # query vector will be [1, 0]; rank stored vectors by alignment with it.
+    monkeypatch.setattr(embeddings, "embed_texts", lambda texts: [[1.0, 0.0]])
+    db.save_embeddings("abc123", [
+        {"chunk_index": 0, "text": "perfect match", "vector": [1.0, 0.0]},   # cos 1.0
+        {"chunk_index": 1, "text": "orthogonal", "vector": [0.0, 1.0]},       # cos 0.0
+    ], data_dir=tmp_path)
+    db.save_embeddings("def456", [
+        {"chunk_index": 0, "text": "partial", "vector": [1.0, 1.0]},          # cos ~0.707
+    ], data_dir=tmp_path)
+    results = embeddings.search_embeddings("hva er RAG?", data_dir=tmp_path, top_k=2)
+    assert [r["video_id"] for r in results] == ["abc123", "def456"]
+    assert results[0]["chunk_index"] == 0
+    assert results[0]["score"] == pytest.approx(1.0)
+    assert results[0]["snippet"] == "perfect match"
+    # Empty query returns nothing.
+    assert embeddings.search_embeddings("   ", data_dir=tmp_path) == []
+
+
+def test_process_embeddings_builds_chunks(tmp_path, monkeypatch):
+    db.init_db(tmp_path)
+    v = video("abc123")
+    db.save_video(v, tmp_path)
+    t = Transcript("abc123", "no", False, [TranscriptSegment(0, 10, "noe innhold her")])
+    db.save_transcript(t, tmp_path)
+    monkeypatch.setattr(embeddings.Config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(embeddings.Config, "EMBED_PROVIDER", "ollama")
+    monkeypatch.setattr(embeddings.Config, "OLLAMA_URL", "http://localhost:11434/api/generate")
+    monkeypatch.setattr(embeddings.Config, "EMBED_MODEL", "nomic-embed-text")
+    monkeypatch.setattr(embeddings.Config, "EMBED_CHUNK_CHARS", 100)
+    calls = []
+    monkeypatch.setattr(embeddings, "embed_texts",
+                        lambda texts: calls.append(list(texts)) or [[0.1, 0.2] for _ in texts])
+    result = embeddings.process_embeddings([v])
+    assert result == {"success": 1, "failed": 0}
+    stored = db.get_all_embeddings(data_dir=tmp_path)
+    assert len(stored) >= 1 and all(len(e["vector"]) == 2 for e in stored)
+    # Second run is cached (no new embedding calls).
+    before = len(calls)
+    assert embeddings.process_embeddings([v]) == {"success": 1, "failed": 0}
+    assert len(calls) == before
+
+
+def test_ollama_embed_url_derivation(monkeypatch):
+    monkeypatch.setattr(embeddings.Config, "EMBED_URL", "")
+    monkeypatch.setattr(embeddings.Config, "OLLAMA_URL", "http://localhost:11434/api/generate")
+    assert embeddings._ollama_embed_url() == "http://localhost:11434/api/embeddings"
+    monkeypatch.setattr(embeddings.Config, "OLLAMA_URL", "http://localhost:11434")
+    assert embeddings._ollama_embed_url() == "http://localhost:11434/api/embeddings"
+    monkeypatch.setattr(embeddings.Config, "EMBED_URL", "http://custom/embed")
+    assert embeddings._ollama_embed_url() == "http://custom/embed"

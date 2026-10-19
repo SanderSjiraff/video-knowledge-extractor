@@ -567,3 +567,65 @@ def get_frame_descriptions(video_id: str, data_dir: Path = Path("data")) -> list
     if row is None:
         return []
     return json.loads(row["desc_json"])
+
+
+def _ensure_embeddings_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS embeddings ("
+        "video_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, "
+        "text TEXT NOT NULL, vector_json TEXT NOT NULL, "
+        "PRIMARY KEY (video_id, chunk_index))"
+    )
+
+
+def save_embeddings(video_id: str, chunks: list[dict], data_dir: Path = Path("data")) -> None:
+    """Replace the stored embedding chunks for a video.
+
+    ``chunks`` is a list of ``{"chunk_index": int, "text": str, "vector": list[float]}``.
+    """
+    with get_connection(data_dir) as conn:
+        _ensure_embeddings_table(conn)
+        conn.execute("DELETE FROM embeddings WHERE video_id = ?", (video_id,))
+        for c in chunks:
+            conn.execute(
+                "INSERT INTO embeddings (video_id, chunk_index, text, vector_json) "
+                "VALUES (?, ?, ?, ?)",
+                (video_id, int(c["chunk_index"]), c["text"], json.dumps(c["vector"])),
+            )
+        conn.commit()
+
+
+def has_embeddings(video_id: str, data_dir: Path = Path("data")) -> bool:
+    """Whether any embedding chunks are stored for a video."""
+    with get_connection(data_dir) as conn:
+        _ensure_embeddings_table(conn)
+        row = conn.execute(
+            "SELECT 1 FROM embeddings WHERE video_id = ? LIMIT 1", (video_id,)
+        ).fetchone()
+    return row is not None
+
+
+def get_all_embeddings(data_dir: Path = Path("data")) -> list[dict]:
+    """Load every stored embedding chunk, or [] if none exist yet."""
+    with get_connection(data_dir) as conn:
+        _ensure_embeddings_table(conn)
+        rows = conn.execute(
+            "SELECT video_id, chunk_index, text, vector_json FROM embeddings"
+        ).fetchall()
+    return [
+        {
+            "video_id": r["video_id"],
+            "chunk_index": r["chunk_index"],
+            "text": r["text"],
+            "vector": json.loads(r["vector_json"]),
+        }
+        for r in rows
+    ]
+
+
+def clear_embeddings(video_id: str, data_dir: Path = Path("data")) -> None:
+    """Drop the stored embedding chunks for a video."""
+    with get_connection(data_dir) as conn:
+        _ensure_embeddings_table(conn)
+        conn.execute("DELETE FROM embeddings WHERE video_id = ?", (video_id,))
+        conn.commit()

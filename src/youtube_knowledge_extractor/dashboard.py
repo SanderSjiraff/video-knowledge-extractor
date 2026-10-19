@@ -200,23 +200,46 @@ def render_ranking():
 
 def render_search():
     st.title("🔎 Søk i transkripter")
-    st.caption("Nøkkelordsøk over innholdet i alle transkripter (SQLite FTS5).")
+    st.caption("Nøkkelordsøk (SQLite FTS5) og, hvis du har kjørt `embed`, semantisk søk etter betydning.")
     query = st.text_input("Søksterm", "", label_visibility="collapsed")
     if not query.strip():
         st.info("Skriv et søksterm for å søke i transkriptene.")
         return
+
+    # --- Keyword search (FTS5) ---
+    st.markdown("### Nøkkelordsøk")
     hits = search_transcripts(query, limit=50, data_dir=Config.DATA_DIR)
+    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
     if not hits:
         st.warning(f"Ingen treff for «{query}».")
-        return
-    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
-    st.write(f"{len(hits)} treff:")
-    for hit in hits:
-        v = videos.get(hit["video_id"])
-        title = v.title if v else hit["video_id"]
-        channel = v.channel if v else ""
-        deep_link = f"https://www.youtube.com/watch?v={hit['video_id']}"
-        st.markdown(f"**{title}** — {channel}\n\n{hit['snippet']}\n\n[Åpne video]({deep_link})")
+    else:
+        st.write(f"{len(hits)} treff:")
+        for hit in hits:
+            v = videos.get(hit["video_id"])
+            title = v.title if v else hit["video_id"]
+            channel = v.channel if v else ""
+            deep_link = f"https://www.youtube.com/watch?v={hit['video_id']}"
+            st.markdown(f"**{title}** — {channel}\n\n{hit['snippet']}\n\n[Åpne video]({deep_link})")
+
+    # --- Semantic search (embeddings), when configured ---
+    from .embeddings import embeddings_configured, search_embeddings
+
+    if embeddings_configured():
+        st.markdown("### Semantisk søk (betydning)")
+        try:
+            semantic = search_embeddings(query, data_dir=Config.DATA_DIR, top_k=10)
+        except Exception:  # noqa: BLE001 - a missing model should not break the page
+            st.error("Semantisk søk feilet — kjør `embed` og sørg for at embeddingsmodellen kjører.")
+            return
+        if not semantic:
+            st.info("Ingen embeddings ennå. Kjør `python src/cli.py embed` først.")
+        else:
+            for r in semantic:
+                v = videos.get(r["video_id"])
+                title = v.title if v else r["video_id"]
+                st.markdown(
+                    f"**{title}** (chunk {r['chunk_index']}, likhet {r['score']:.3f})\n\n{r['snippet']}"
+                )
 
 
 def render_synthesis():

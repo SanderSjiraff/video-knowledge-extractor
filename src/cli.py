@@ -172,6 +172,63 @@ def describe_frames(limit: int | None, force: bool, max_frames: int | None, keep
 
 
 @cli.command()
+@click.option("--force", is_flag=True, help="Re-embed even if embeddings already exist")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max videos to process")
+def embed(force: bool, limit: int | None) -> None:
+    """Build semantic-search embeddings for transcribed videos.
+
+    Embeds chunks of each transcript with a small embedding model so you can
+    later do meaning-based retrieval (see 'search-semantic'). Uses a separate
+    embedding model (local Ollama by default), so it does not use the analysis
+    endpoint.
+    """
+    from youtube_knowledge_extractor.db import get_all_videos
+    from youtube_knowledge_extractor.embeddings import process_embeddings
+
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    videos = [v for v in videos if v.status is not None and str(v.status) != "inaccessible"]
+    if limit is not None:
+        videos = videos[:limit]
+    if not videos:
+        console.print("[yellow]No videos to process. Run 'discover' first.[/yellow]")
+        return
+    console.print(
+        f"[cyan]Building embeddings for {len(videos)} video(s) "
+        f"(provider: {Config.EMBED_PROVIDER}, model: {Config.EMBED_MODEL})...[/cyan]"
+    )
+    result = process_embeddings(videos, force=force)
+    console.print(
+        f"[green]Embeddings done:[/green] {result.get('success', 0)} embedded, "
+        f"{result.get('failed', 0)} failed."
+    )
+
+
+@cli.command("search-semantic")
+@click.argument("query")
+@click.option("--top", "top_k", type=click.IntRange(min=1), default=5, help="Number of results")
+def search_semantic(query: str, top_k: int) -> None:
+    """Semantic (embedding) search over transcript chunks by meaning."""
+    from youtube_knowledge_extractor.db import get_all_videos
+    from youtube_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
+
+    if not embeddings_configured():
+        raise click.ClickException("No embedding model configured (set EMBED_MODEL / EMBED_PROVIDER).")
+    results = search_embeddings(query, data_dir=Config.DATA_DIR, top_k=top_k)
+    if not results:
+        console.print("[yellow]No results — have you run 'embed' yet?[/yellow]")
+        return
+    video_by_id = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
+    for r in results:
+        v = video_by_id.get(r["video_id"])
+        title = v.title if v else r["video_id"]
+        snippet = r["snippet"]
+        if len(snippet) > 160:
+            snippet = snippet[:160] + "…"
+        console.print(f"[green]{r['score']:.3f}[/green] — [bold]{title}[/bold] (chunk {r['chunk_index']})")
+        console.print(f"    {snippet}")
+
+
+@cli.command()
 def cost() -> None:
     """Estimate cost for AI analysis."""
     try:

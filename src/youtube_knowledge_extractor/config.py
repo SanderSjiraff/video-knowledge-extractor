@@ -51,6 +51,17 @@ class Config:
     VISION_MAX_FRAMES: int = int(os.getenv("VISION_MAX_FRAMES", "6"))
     VISION_API_URL: str = os.getenv("VISION_API_URL", "").strip()
 
+    # Embedding-based semantic search (RAG / context retrieval). Complements
+    # the keyword (FTS5) search with meaning-based retrieval. Uses a separate
+    # small embedding model, so it does not affect the analysis cost model.
+    # Provider 'ollama' (local, free) or 'api' (OpenAI-compatible /embeddings).
+    EMBED_PROVIDER: str = os.getenv("EMBED_PROVIDER", "ollama").strip().lower()
+    EMBED_MODEL: str = os.getenv("EMBED_MODEL", "nomic-embed-text").strip()
+    EMBED_URL: str = os.getenv("EMBED_URL", "").strip()  # empty → derive from OLLAMA_URL
+    EMBED_API_URL: str = os.getenv("EMBED_API_URL", "").strip()
+    EMBED_API_KEY: str = os.getenv("EMBED_API_KEY", "").strip()  # empty → reuse LLM_API_KEY
+    EMBED_CHUNK_CHARS: int = int(os.getenv("EMBED_CHUNK_CHARS", "15000"))
+
     @classmethod
     def validate(cls) -> None:
         for name, value in (("SPENDING_LIMIT_USD", cls.SPENDING_LIMIT_USD), ("RATE_LIMIT_SECONDS", cls.RATE_LIMIT_SECONDS)):
