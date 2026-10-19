@@ -17,6 +17,7 @@ from youtube_knowledge_extractor.db import (
     get_transcript,
     get_connection,
     init_db,
+    search_transcripts,
 )
 from youtube_knowledge_extractor.models import VideoStatus
 
@@ -84,6 +85,20 @@ def _all_analyses():
         ]
 
 
+def _ts_to_seconds(ts: str) -> int | None:
+    """Parse 'MM:SS' or 'HH:MM:SS' into seconds for a YouTube deep link."""
+    try:
+        nums = [int(x) for x in (ts or "").split(":")]
+    except ValueError:
+        return None
+    if not 1 <= len(nums) <= 3:
+        return None
+    total = 0
+    for n in nums:
+        total = total * 60 + n
+    return total
+
+
 def render_overview():
     st.title("🧠 YouTube Knowledge Extractor")
     st.markdown("---")
@@ -125,9 +140,19 @@ def render_overview():
                 st.markdown("#### Sammendrag")
                 st.write(analysis["summary_no"])
                 st.markdown("#### Innsikter")
+                st.caption("✅ sitat verifisert i transkriptet · ⚠️ sitat ikke funnet · • ingen sitat. Tidsstempel er klikkbart.")
                 for ins in analysis["insights"]:
-                    ts = f" ({ins.get('timestamp', '')})" if ins.get("timestamp") else ""
-                    st.write(f"- **{ins['insight']}**{ts}: {ins['explanation']}")
+                    mark = "✅" if ins.get("verified") else ("⚠️" if ins.get("quote") else "•")
+                    ts = ins.get("timestamp") or ""
+                    ts_link = ""
+                    secs = _ts_to_seconds(ts)
+                    if secs is not None:
+                        deep_link = f"https://www.youtube.com/watch?v={v.video_id}&t={secs}s"
+                        ts_link = f" [⏱ {ts}]({deep_link})"
+                    st.write(f"- {mark} **{ins['insight']}**{ts_link}: {ins['explanation']}")
+                    reason = ins.get("verification_reason") or ""
+                    if reason:
+                        st.caption(f"   {mark} {reason}")
                 st.markdown("#### Teknikker og verktøy")
                 st.write(", ".join(analysis["techniques_tools"]) or "Ingen")
                 st.markdown("#### Handlingsbare steg")
@@ -170,6 +195,27 @@ def render_ranking():
         st.write(f"{rank}. **{title}** — verdi: {score:.1f} (praktisk {a['practical_score']}, relevans {a['relevance_score']})")
 
 
+def render_search():
+    st.title("🔎 Søk i transkripter")
+    st.caption("Nøkkelordsøk over innholdet i alle transkripter (SQLite FTS5).")
+    query = st.text_input("Søksterm", "", label_visibility="collapsed")
+    if not query.strip():
+        st.info("Skriv et søksterm for å søke i transkriptene.")
+        return
+    hits = search_transcripts(query, limit=50, data_dir=Config.DATA_DIR)
+    if not hits:
+        st.warning(f"Ingen treff for «{query}».")
+        return
+    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
+    st.write(f"{len(hits)} treff:")
+    for hit in hits:
+        v = videos.get(hit["video_id"])
+        title = v.title if v else hit["video_id"]
+        channel = v.channel if v else ""
+        deep_link = f"https://www.youtube.com/watch?v={hit['video_id']}"
+        st.markdown(f"**{title}** — {channel}\n\n{hit['snippet']}\n\n[Åpne video]({deep_link})")
+
+
 def render_topics():
     st.title("📚 Temaer")
     st.info("Temaklyngevisning er ikke implementert ennå.")
@@ -202,6 +248,7 @@ def render_exports():
 
 PAGES = {
     "Oversikt": render_overview,
+    "Søk": render_search,
     "Ranking": render_ranking,
     "Temaer": render_topics,
     "Eksport": render_exports,

@@ -194,7 +194,9 @@ def run_analysis(
                         analysis.summary_no,
                         json_mod.dumps([
                             {"insight": i.insight, "explanation": i.explanation,
-                             "timestamp": i.timestamp, "confidence": i.confidence}
+                             "timestamp": i.timestamp, "confidence": i.confidence,
+                             "quote": i.quote, "verified": i.verified,
+                             "verification_reason": i.verification_reason}
                             for i in analysis.insights
                         ]),
                         json_mod.dumps(analysis.techniques_tools),

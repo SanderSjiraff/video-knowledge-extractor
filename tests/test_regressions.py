@@ -10,7 +10,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from youtube_knowledge_extractor import analysis, db, discovery, orchestrator
-from youtube_knowledge_extractor.models import Transcript, TranscriptSegment, Video, VideoAnalysis, VideoStatus
+from youtube_knowledge_extractor.models import (
+    Insight,
+    Transcript,
+    TranscriptSegment,
+    Video,
+    VideoAnalysis,
+    VideoStatus,
+)
 
 
 def video(vid="dQw4w9WgXcQ", status=VideoStatus.DISCOVERED):
@@ -366,3 +373,85 @@ def test_dashboard_starts_with_fresh_temp_database(tmp_path, monkeypatch):
     monkeypatch.setattr(Config, "EXPORTS_DIR", tmp_path / "exports")
     app = AppTest.from_file(str(Path(__file__).parent.parent / "src" / "youtube_knowledge_extractor" / "dashboard.py")).run(timeout=10)
     assert not app.exception
+
+
+def test_fts_search_finds_content_and_snippet(tmp_path):
+    db.init_db(tmp_path)
+    db.save_transcript(Transcript("vid1", "en", False, [TranscriptSegment(0, 5, "quantum entanglement explained simply")]), tmp_path)
+    db.save_transcript(Transcript("vid2", "en", False, [TranscriptSegment(0, 5, "how to bake a simple cake")]), tmp_path)
+    hits = db.search_transcripts("quantum", data_dir=tmp_path)
+    assert len(hits) == 1
+    assert hits[0]["video_id"] == "vid1"
+    assert "quantum" in hits[0]["snippet"].lower()
+    # multi-term query is an AND: both words must appear in the same transcript
+    assert db.search_transcripts("quantum entanglement", data_dir=tmp_path)[0]["video_id"] == "vid1"
+    assert db.search_transcripts("quantum cake", data_dir=tmp_path) == []
+    assert db.search_transcripts("", data_dir=tmp_path) == []
+
+
+def test_fts_search_fallback_without_fts5(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "_fts5_available", lambda: False)
+    db.init_db(tmp_path)
+    db.save_transcript(Transcript("vid1", "en", False, [TranscriptSegment(0, 5, "quantum entanglement")]), tmp_path)
+    db.save_transcript(Transcript("vid2", "en", False, [TranscriptSegment(0, 5, "how to bake a cake")]), tmp_path)
+    hits = db.search_transcripts("quantum", data_dir=tmp_path)
+    assert len(hits) == 1 and hits[0]["video_id"] == "vid1"
+    assert hits[0]["snippet"]
+
+
+def test_fts_search_rebuilds_missing_index(tmp_path):
+    db.init_db(tmp_path)
+    db.save_transcript(Transcript("vid1", "en", False, [TranscriptSegment(0, 5, "neural networks learn")]), tmp_path)
+    # Simulate a DB created before FTS existed: drop the index, then search.
+    with db.get_connection(tmp_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS transcripts_fts")
+        conn.commit()
+    hits = db.search_transcripts("neural", data_dir=tmp_path)
+    assert len(hits) == 1 and hits[0]["video_id"] == "vid1"
+
+
+def test_verify_insight_grounding_and_timestamp():
+    transcript = Transcript("x", "en", False, [
+        TranscriptSegment(0, 2, "welcome to the intro"),
+        TranscriptSegment(120, 5, "now we cover attention layers in transformers"),
+    ])
+    grounded = Insight(insight="Attention", explanation="e", timestamp="00:05", confidence="high", quote="now we cover attention layers")
+    hallucinated = Insight(insight="Fake", explanation="e", timestamp="00:00", confidence="high", quote="quantum flux capacitor")
+    no_quote = Insight(insight="No cite", explanation="e", timestamp="00:00", confidence="medium")
+    [g, h, n] = analysis.verify_insights(transcript, [grounded, hallucinated, no_quote])
+
+    # grounded: quote found at 02:00, claimed 00:05 -> verified + snapped
+    assert g.verified is True
+    assert g.timestamp == "02:00"
+    assert "justert" in g.verification_reason
+
+    # hallucinated: quote not found -> unverified, confidence downgraded
+    assert h.verified is False
+    assert h.confidence == "low"
+    assert h.verification_reason
+
+    # no quote: not penalized, left unverified
+    assert n.verified is False
+    assert n.confidence == "medium"
+    assert "Ingen sitat" in n.verification_reason
+
+
+def test_verify_insight_near_timestamp_is_not_snapped():
+    transcript = Transcript("x", "en", False, [
+        TranscriptSegment(30, 5, "we use a transformer here"),
+    ])
+    ins = Insight(insight="Transformer", explanation="e", timestamp="00:35", confidence="high", quote="we use a transformer")
+    [v] = analysis.verify_insights(transcript, [ins])
+    assert v.verified is True
+    assert v.timestamp == "00:35"
+    assert v.verification_reason == ""
+
+
+def test_parse_and_format_timestamp_roundtrip():
+    assert analysis._parse_timestamp("00:05") == 5
+    assert analysis._parse_timestamp("02:00") == 120
+    assert analysis._parse_timestamp("01:00:00") == 3600
+    assert analysis._parse_timestamp("nonsense") is None
+    assert analysis._parse_timestamp(None) is None
+    assert analysis._format_timestamp(120) == "02:00"
+    assert analysis._format_timestamp(3600) == "01:00:00"

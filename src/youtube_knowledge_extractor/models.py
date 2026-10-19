@@ -95,6 +95,9 @@ class Insight:
     explanation: str
     timestamp: Optional[str] = None
     confidence: str = "medium"  # high, medium, low
+    quote: Optional[str] = None  # verbatim transcript excerpt grounding the insight
+    verified: bool = False  # quote found in the transcript
+    verification_reason: str = ""  # human note when the quote/timestamp failed checks
 
 
 @dataclass

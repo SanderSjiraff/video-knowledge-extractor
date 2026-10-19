@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -33,6 +34,23 @@ def get_connection(data_dir: Path = Path("data")):
         yield conn
     finally:
         conn.close()
+
+
+_FTS5_AVAILABLE: Optional[bool] = None
+
+
+def _fts5_available() -> bool:
+    """Whether this SQLite build supports the FTS5 module (cached)."""
+    global _FTS5_AVAILABLE
+    if _FTS5_AVAILABLE is None:
+        try:
+            probe = sqlite3.connect(":memory:")
+            probe.execute("CREATE VIRTUAL TABLE _fts_probe USING fts5(x)")
+            probe.close()
+            _FTS5_AVAILABLE = True
+        except sqlite3.OperationalError:
+            _FTS5_AVAILABLE = False
+    return _FTS5_AVAILABLE
 
 
 def init_db(data_dir: Path = Path("data")) -> None:
@@ -87,6 +105,14 @@ def init_db(data_dir: Path = Path("data")) -> None:
             CREATE INDEX IF NOT EXISTS idx_videos_order ON videos(playlist_order);
             """
         )
+        if _fts5_available():
+            try:
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS transcripts_fts USING fts5("
+                    "video_id UNINDEXED, full_text, tokenize='unicode61')"
+                )
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
 
 
@@ -195,6 +221,16 @@ def save_transcript(transcript: Transcript, data_dir: Path = Path("data")) -> No
                 transcript.fetched_at.isoformat(),
             ),
         )
+        if _fts5_available():
+            try:
+                full_text = " ".join(seg.text for seg in transcript.segments)
+                conn.execute("DELETE FROM transcripts_fts WHERE video_id = ?", (transcript.video_id,))
+                conn.execute(
+                    "INSERT INTO transcripts_fts (video_id, full_text) VALUES (?, ?)",
+                    (transcript.video_id, full_text),
+                )
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
 
 
@@ -216,6 +252,116 @@ def get_transcript(video_id: str, data_dir: Path = Path("data")) -> Optional[Tra
             segments=segments,
             fetched_at=datetime.fromisoformat(row["fetched_at"]),
         )
+
+
+def _transcript_full_text(segments_json: str) -> str:
+    """Reconstruct plain full text from a stored segments_json column."""
+    try:
+        segs = json.loads(segments_json)
+    except (ValueError, TypeError):
+        return ""
+    return " ".join(s.get("text", "") for s in segs)
+
+
+def _fts_match_expression(query: str) -> str:
+    """Turn a user query into a safe FTS5 MATCH expression.
+
+    Each alphanumeric token is wrapped in double quotes (a literal phrase) so
+    FTS5 query operators in the input cannot change the query's meaning.
+    Space-separated phrases are implicit AND in FTS5.
+    """
+    tokens = re.findall(r"[0-9a-zA-ZæøåÆØÅ_]+", query)
+    if not tokens:
+        return ""
+    return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+
+
+def rebuild_fts(data_dir: Path = Path("data")) -> int:
+    """Rebuild the FTS index from all stored transcripts. Returns count indexed."""
+    if not _fts5_available():
+        return 0
+    with get_connection(data_dir) as conn:
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS transcripts_fts USING fts5("
+            "video_id UNINDEXED, full_text, tokenize='unicode61')"
+        )
+        rows = conn.execute("SELECT video_id, segments_json FROM transcripts").fetchall()
+        conn.execute("DELETE FROM transcripts_fts")
+        for row in rows:
+            conn.execute(
+                "INSERT INTO transcripts_fts (video_id, full_text) VALUES (?, ?)",
+                (row["video_id"], _transcript_full_text(row["segments_json"])),
+            )
+        conn.commit()
+    return len(rows)
+
+
+def search_transcripts(query: str, limit: int = 20, data_dir: Path = Path("data")) -> list[dict[str, Any]]:
+    """Full-text keyword search across all transcript content.
+
+    Returns a list of ``{"video_id", "snippet", "rank"}`` ordered by relevance
+    (bm25). Uses SQLite FTS5 when available, otherwise a substring fallback.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    if not _fts5_available():
+        return _search_transcripts_fallback(query, limit, data_dir)
+
+    # Self-heal: rebuild if the index is missing or out of sync with transcripts.
+    with get_connection(data_dir) as conn:
+        try:
+            fts_count = conn.execute("SELECT COUNT(*) FROM transcripts_fts").fetchone()[0]
+        except sqlite3.OperationalError:
+            fts_count = -1
+        tr_count = conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]
+    if fts_count != tr_count:
+        rebuild_fts(data_dir)
+
+    terms = _fts_match_expression(query)
+    if not terms:
+        return []
+    with get_connection(data_dir) as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT video_id,
+                       snippet(transcripts_fts, 1, '«', '»', '…', 12) AS snippet,
+                       bm25(transcripts_fts) AS rank
+                FROM transcripts_fts
+                WHERE transcripts_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (terms, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return _search_transcripts_fallback(query, limit, data_dir)
+    return [
+        {"video_id": r["video_id"], "snippet": r["snippet"], "rank": r["rank"]}
+        for r in rows
+    ]
+
+
+def _search_transcripts_fallback(query: str, limit: int, data_dir: Path = Path("data")) -> list[dict[str, Any]]:
+    """Substring search used when FTS5 is unavailable (e.g. older SQLite builds)."""
+    tokens = re.findall(r"[0-9a-zA-ZæøåÆØÅ_]+", query)
+    if not tokens:
+        return []
+    lowered = [t.lower() for t in tokens]
+    with get_connection(data_dir) as conn:
+        rows = conn.execute("SELECT video_id, segments_json FROM transcripts").fetchall()
+    results: list[dict[str, Any]] = []
+    for r in rows:
+        text = _transcript_full_text(r["segments_json"]).lower()
+        hits = sum(text.count(t) for t in lowered)
+        if hits <= 0:
+            continue
+        idx = text.find(lowered[0])
+        snippet = text[max(0, idx - 40): idx + 80].strip()
+        results.append({"video_id": r["video_id"], "snippet": "…" + snippet + "…", "rank": -float(hits)})
+    results.sort(key=lambda x: x["rank"])
+    return results[:limit]
 
 
 def _row_to_video(row: sqlite3.Row) -> Video:

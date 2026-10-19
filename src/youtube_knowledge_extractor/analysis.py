@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from typing import Any
 
@@ -29,7 +30,7 @@ VIKTIGE REGLER:
 
 OPPGAVE:
 1. Lag en konsis oppsummering på norsk (100-200 ord).
-2. Trekk ut 5-12 høyverdige innsikter med forklaringer.
+2. Trekk ut 5-12 høyverdige innsikter med forklaringer. For hvert innsikt sitér et kort, direkte uttrykk fra transkriptet (på transkriptets språk) som støtter det; dersom du ikke kan sitere det, sett confidence til "low".
 3. Identifiser konkrete teknikker, verktøy, algoritmer, rammeverk og arbeidsflyter.
 4. Trekk ut handlingsbare steg og eksempler.
 5. Bevar tidsstempler der det er relevant.
@@ -42,7 +43,7 @@ SVAR KUN MED JSON I DETTE FORMATET:
 {{
   "summary_no": "...",
   "insights": [
-    {{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low"}}
+    {{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low", "quote": "kort direkte sitat fra transkriptet (på transkriptets språk) eller tom"}}
   ],
   "techniques_tools": ["..."],
   "actionable_steps": ["..."],
@@ -72,7 +73,7 @@ VIKTIGE REGLER:
 
 OPPGAVE:
 1. Lag en kort oppsummering av denne delen (2-4 setninger).
-2. Trekk ut innsikter som faktisk finnes i denne delen, med forklaringer.
+2. Trekk ut innsikter som faktisk finnes i denne delen, med forklaringer. Sitér for hvert innsikt et kort, direkte uttrykk fra transkriptet som støtter det.
 3. Identifiser konkrete teknikker, verktøy, algoritmer, rammeverk og arbeidsflyter som nevnes her.
 4. Trekk ut handlingsbare steg og eksempler fra denne delen.
 5. Merk de mest verdifulle seksjonene i denne delen med tidsstempel.
@@ -80,7 +81,7 @@ OPPGAVE:
 SVAR KUN MED JSON I DETTE FORMATET:
 {{
   "part_summary": "...",
-  "insights": [{{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low"}}],
+  "insights": [{{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low", "quote": "kort direkte sitat fra transkriptet (på transkriptets språk) eller tom"}}],
   "techniques_tools": ["..."],
   "actionable_steps": ["..."],
   "key_sections": [{{"start": "MM:SS", "end": "MM:SS", "description": "..."}}]
@@ -93,7 +94,7 @@ DEL {chunk_index} av {total_chunks}:
 MERGE_PROMPT_TEMPLATE = """Du er en ekspertkunnskapsingeniør. Videoen var lang, så transkriptet ble delt i {total_chunks} deler som hver ble analysert for seg. Din oppgave er å slå delanalysene sammen til ÉN samlet analyse av HELE videoen.
 
 VIKTIGE REGLER:
-- Slå sammen innsikter og fjern duplikater uten å miste unikt innhold fra noen del.
+- Slå sammen innsikter og fjern duplikater uten å miste unikt innhold fra noen del. Behold det mest representative sitatet (quote) for hvert innsikt.
 - Oppsummer kun faktisk innhold fra delanalysene. Ikke finn på detaljer.
 - Vurder hele videoen (relevans, dybde, praktisk nytte, redundans), ikke én enkelt del.
 - Bevar tidsstempler der det er relevant.
@@ -105,7 +106,7 @@ DELANALYSER (én JSON-objekt per del, i rekkefølge):
 SVAR KUN MED JSON I DETTE FORMATET:
 {{
   "summary_no": "...",
-  "insights": [{{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low"}}],
+  "insights": [{{"insight": "...", "explanation": "...", "timestamp": "MM:SS eller tom", "confidence": "high|medium|low", "quote": "kort direkte sitat fra transkriptet (på transkriptets språk) eller tom"}}],
   "techniques_tools": ["..."],
   "actionable_steps": ["..."],
   "relevance_score": 1-5,
@@ -136,6 +137,9 @@ CHUNK_OVERLAP_CHARS = 1000
 # Output-token estimate for each per-chunk (map) call; the merge call uses
 # LLM_MAX_OUTPUT_TOKENS.
 MAP_OUTPUT_ESTIMATE = 2048
+# Max distance (seconds) between an insight's claimed timestamp and where its
+# supporting quote actually appears before we snap the timestamp.
+TIMESTAMP_WINDOW_SECONDS = 90.0
 _last_llm_call = 0.0
 
 
@@ -403,18 +407,21 @@ def analyze_video(
             prompts = map_prompts + [merge_prompt]
 
         validate_analysis_payload(raw)
+        insights = [
+            Insight(
+                insight=i.get("insight", ""),
+                explanation=i.get("explanation", ""),
+                timestamp=i.get("timestamp") or None,
+                confidence=i.get("confidence", "medium"),
+                quote=i.get("quote") or None,
+            )
+            for i in raw.get("insights", [])
+        ]
+        insights = verify_insights(transcript, insights)
         analysis = VideoAnalysis(
             video_id=video.video_id,
             summary_no=raw.get("summary_no", ""),
-            insights=[
-                Insight(
-                    insight=i.get("insight", ""),
-                    explanation=i.get("explanation", ""),
-                    timestamp=i.get("timestamp") or None,
-                    confidence=i.get("confidence", "medium"),
-                )
-                for i in raw.get("insights", [])
-            ],
+            insights=insights,
             techniques_tools=raw.get("techniques_tools", []),
             actionable_steps=raw.get("actionable_steps", []),
             relevance_score=raw.get("relevance_score", 0),
@@ -466,6 +473,8 @@ def validate_analysis_payload(raw: Any) -> None:
     for insight in raw["insights"]:
         if not isinstance(insight, dict) or any(not isinstance(insight.get(k), str) or not insight[k].strip() for k in ("insight", "explanation")) or insight.get("confidence") not in {"high", "medium", "low"} or not isinstance(insight.get("timestamp", ""), str):
             raise ValueError("Invalid insight")
+        if "quote" in insight and not isinstance(insight["quote"], str):
+            raise ValueError("Invalid insight quote")
     if not isinstance(raw.get("key_sections"), list):
         raise ValueError("Invalid key_sections")
     for section in raw["key_sections"]:
@@ -476,3 +485,90 @@ def validate_analysis_payload(raw: Any) -> None:
         raise ValueError("Invalid estimated_key_watch_minutes")
     if not isinstance(raw.get("low_confidence"), bool):
         raise ValueError("Invalid low_confidence")
+
+
+def _content_tokens(text: str) -> list[str]:
+    """Lowercase alphanumeric content tokens (keeps æ/ø/å)."""
+    return re.findall(r"[0-9a-zæøå]+", (text or "").lower())
+
+
+def _parse_timestamp(value: str | None) -> float | None:
+    """Parse 'MM:SS' or 'HH:MM:SS' into seconds, or None if invalid."""
+    if not value:
+        return None
+    parts = value.strip().split(":")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if not 1 <= len(nums) <= 3 or any(n < 0 for n in nums):
+        return None
+    total = 0.0
+    for n in nums:
+        total = total * 60 + n
+    return total
+
+
+def _format_timestamp(seconds: float) -> str:
+    total = int(round(max(0, seconds)))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _find_quote_time(quote: str, transcript: Transcript) -> tuple[bool, float | None]:
+    """Locate a quote in the transcript as an in-order token subsequence.
+
+    Returns (found, time_of_first_matched_token). The subsequence match
+    tolerates the small errors typical of Whisper / autogenerated captions.
+    """
+    needle = _content_tokens(quote)
+    if not needle:
+        return False, None
+    matched = 0
+    first_time: float | None = None
+    for seg in transcript.segments:
+        for tok in _content_tokens(seg.text):
+            if matched < len(needle) and tok == needle[matched]:
+                if matched == 0:
+                    first_time = seg.start
+                matched += 1
+    return (True, first_time) if matched == len(needle) else (False, None)
+
+
+def verify_insights(transcript: Transcript, insights: list[Insight]) -> list[Insight]:
+    """Ground each insight in the transcript and sanity-check its timestamp.
+
+    - A quote that cannot be found in the transcript marks the insight
+      unverified and downgrades its confidence (likely hallucinated).
+    - A quote found far from the claimed timestamp snaps the timestamp to the
+      location the quote actually matches.
+    - Insights without a quote keep their model confidence and are marked
+      unverified (not penalized).
+    """
+    for ins in insights:
+        quote = (ins.quote or "").strip()
+        if not quote:
+            ins.verified = False
+            ins.verification_reason = "Ingen sitat å verifisere"
+            continue
+        found, at_time = _find_quote_time(quote, transcript)
+        if not found:
+            ins.verified = False
+            ins.confidence = "low"
+            ins.verification_reason = "Sitatet ble ikke funnet i transkriptet"
+            continue
+        ins.verified = True
+        claimed = _parse_timestamp(ins.timestamp)
+        if (
+            claimed is not None
+            and at_time is not None
+            and abs(claimed - at_time) > TIMESTAMP_WINDOW_SECONDS
+        ):
+            ins.timestamp = _format_timestamp(at_time)
+            ins.verification_reason = f"Tidsstempel justert ({abs(claimed - at_time):.0f}s fra sitatets plass)"
+        else:
+            ins.verification_reason = ""
+    return insights

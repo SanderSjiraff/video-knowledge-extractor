@@ -87,7 +87,7 @@ python src/cli.py dashboard
 | `analyze --limit N` | Sender inntil N ventende transkripter til modellen. Lagrede analyser hoppes over. |
 | `analyze --limit N --force` | Analyserer også videoer som har en lagret analyse. Dette kan koste på nytt. |
 | `status` | Viser lagret behandlingsstatus. |
-| `dashboard` | Starter lokal visning av videoer, analyser, rangering og JSON-eksport. |
+| `dashboard` | Starter lokal visning av videoer, analyser, fulltekst-søk (Søk), rangering og JSON-eksport. |
 
 Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt heltall.
 
@@ -103,6 +103,8 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - `LLM_MAX_OUTPUT_TOKENS` begrenser forespurt svarlengde og brukes i estimatet. For lav grense kan gi avbrutt eller ugyldig JSON.
 - `RATE_LIMIT_SECONDS` styrer pausen mellom analyseforsøk. Også mislykkede API-kall kan bli fakturert.
 - Lange transkripter deles i overlappende deler som analyseres hver for seg og slås sammen (map-reduce), slik at hele videoen dekkes uten avkorting. Antall deler – og dermed modellkall og kostnad – øker med videoens lengde; kortere videoer bruker fortsatt ett enkelt kall.
+- Hvert innsikt ber modellen om et kort sitat fra transkriptet. Sitater som ikke finnes i transkriptet markeres ⚠️ og senkes til lav konfidens (sannsynlig hallusinasjon), og tidsstempler som ligger langt fra sitatets faktiske plass justeres automatisk. Dashboardet viser tidsstempler som klikkbare YouTube-lenker.
+- Fulltekst-søket (Søk i dashboardet) bruker SQLite FTS5 over hele transkriptinnholdet med bm25-rangering og uthevet snutt. Hvis SQLite-bygget mangler FTS5, brukes automatisk delstrekk-søk som reserve. Nye transkripter indekseres ved lagring; eksisterende databaser bygges om ved første søk.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
@@ -147,10 +149,10 @@ src/youtube_knowledge_extractor/
   discovery.py                      Metadata og lenkelister
   transcripts.py                    Undertekster og lokal cache
   whisper_transcripts.py            Lokal Whisper-transkribering av lyd (GPU/CUDA)
-  analysis.py                       Prompt, modellkall og svarbehandling
-  db.py                             SQLite-lagring
+  analysis.py                       Prompt, modellkall, svarbehandling og innsiktsverifisering
+  db.py                             SQLite-lagring og FTS5-fulltekst-søk
   orchestrator.py                    Arbeidsflyt og estimatgrense
-  dashboard.py                       Streamlit-visning og eksport
+  dashboard.py                       Streamlit-visning, fulltekst-søk og eksport
   cross_video.py                    Hjelpefunksjoner for temaer og rangering
   models.py                         Datamodeller
 tests/                              Tester uten live modellkall
