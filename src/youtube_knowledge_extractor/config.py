@@ -42,6 +42,15 @@ class Config:
     VISUAL_MAX_FRAMES: int = int(os.getenv("VISUAL_MAX_FRAMES", "200"))
     OCR_ENGINE: str = os.getenv("OCR_ENGINE", "easyocr").strip().lower()
 
+    # Vision-model descriptions of on-screen visuals (code, diagrams, UI).
+    # Opt-in via the 'describe-frames' command; costs vision tokens, so the
+    # number of frames is capped. Provider 'ollama' (local, free) or 'api'
+    # (OpenAI-compatible Chat Completions endpoint that accepts images).
+    VISION_PROVIDER: str = os.getenv("VISION_PROVIDER", "ollama").strip().lower()
+    VISION_MODEL: str = os.getenv("VISION_MODEL", "llava").strip()
+    VISION_MAX_FRAMES: int = int(os.getenv("VISION_MAX_FRAMES", "6"))
+    VISION_API_URL: str = os.getenv("VISION_API_URL", "").strip()
+
     @classmethod
     def validate(cls) -> None:
         for name, value in (("SPENDING_LIMIT_USD", cls.SPENDING_LIMIT_USD), ("RATE_LIMIT_SECONDS", cls.RATE_LIMIT_SECONDS)):

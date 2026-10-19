@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, db, notes, visual
+from youtube_knowledge_extractor import analysis, db, notes, vision, visual
 from youtube_knowledge_extractor.models import (
     Insight,
     Transcript,
@@ -627,3 +627,85 @@ def test_extract_frames_raises_without_ffmpeg(tmp_path, monkeypatch):
     monkeypatch.setattr(visual, "ffmpeg_available", lambda: False)
     with pytest.raises(RuntimeError, match="ffmpeg"):
         visual.extract_frames(tmp_path / "v.mp4", 10, tmp_path / "frames")
+
+
+# ---------------------------------------------------------------------------
+# Vision-model descriptions of on-screen visuals.
+# ---------------------------------------------------------------------------
+
+
+def test_frame_descriptions_roundtrip(tmp_path):
+    db.init_db(tmp_path)
+    db.save_frame_descriptions("abc123", [
+        {"time_seconds": 0.0, "description": "Python code for a FastAPI app"},
+        {"time_seconds": 30.0, "description": "A neural-network diagram"},
+    ], data_dir=tmp_path)
+    items = db.get_frame_descriptions("abc123", data_dir=tmp_path)
+    assert [i["description"] for i in items] == [
+        "Python code for a FastAPI app", "A neural-network diagram"
+    ]
+    assert db.get_frame_descriptions("missing", data_dir=tmp_path) == []
+
+
+def test_analyze_video_includes_frame_descriptions_in_prompt(tmp_path, monkeypatch):
+    v, t = _setup_analysis_env(tmp_path, monkeypatch, text="some audio")
+    db.save_frame_descriptions(v.video_id, [
+        {"time_seconds": 10.0, "description": "Code: def train(): model.fit(x)"},
+    ], data_dir=tmp_path)
+    captured: list[str] = []
+
+    def spy(prompt, model=None):
+        captured.append(prompt)
+        return _valid_payload()
+
+    monkeypatch.setattr(analysis, "call_llm", spy)
+    assert analysis.analyze_video(v, t) is not None
+    assert "BESKRIVELSE AV SKJERMEN" in captured[0]
+    assert "def train(): model.fit(x)" in captured[0]
+    # No OCR captured, so the OCR section must be absent.
+    assert "TEKST PÅ SKJERMEN" not in captured[0]
+
+
+def test_describe_frame_unknown_provider_raises(monkeypatch):
+    monkeypatch.setattr(vision.Config, "VISION_PROVIDER", "mistral")
+    with pytest.raises(ValueError):
+        vision.describe_frame(Path("/nonexistent/frame.png"))
+
+
+def test_vision_configured_logic(monkeypatch):
+    # ollama: requires OLLAMA_URL.
+    monkeypatch.setattr(vision.Config, "VISION_PROVIDER", "ollama")
+    monkeypatch.setattr(vision.Config, "OLLAMA_URL", "http://localhost:11434/api/generate")
+    assert vision.vision_configured() is True
+    monkeypatch.setattr(vision.Config, "OLLAMA_URL", "")
+    assert vision.vision_configured() is False
+    # api: requires an endpoint and a model.
+    monkeypatch.setattr(vision.Config, "VISION_PROVIDER", "api")
+    monkeypatch.setattr(vision.Config, "VISION_API_URL", "http://api/v1/chat")
+    monkeypatch.setattr(vision.Config, "VISION_MODEL", "gpt-4o")
+    assert vision.vision_configured() is True
+    monkeypatch.setattr(vision.Config, "VISION_MODEL", "")
+    assert vision.vision_configured() is False
+
+
+def test_describe_frames_collects_and_skips_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(vision, "ffmpeg_available", lambda: True)
+    monkeypatch.setattr(vision.Config, "VISION_PROVIDER", "ollama")
+    monkeypatch.setattr(vision.Config, "OLLAMA_URL", "http://localhost:11434/api/generate")
+    monkeypatch.setattr(vision.Config, "VISION_MAX_FRAMES", 6)
+
+    v = video("abc123")
+    v.duration_seconds = 100
+    fake_video = tmp_path / "abc123.mp4"
+    monkeypatch.setattr(vision, "_download_video", lambda video, d: fake_video)
+
+    p0, p1, p2 = (tmp_path / f"frame_{i:04d}.png" for i in range(3))
+    monkeypatch.setattr(vision, "extract_frames",
+                        lambda vp, step, fd, max_frames=200: [(0.0, p0), (30.0, p1), (60.0, p2)])
+    descs = {str(p0): "code on screen", str(p1): "", str(p2): "a diagram"}
+    monkeypatch.setattr(vision, "describe_frame", lambda fp, prompt=None: descs[str(fp)])
+
+    items = vision.describe_frames(v, keep_media=True)
+    # The empty description (p1) is skipped; the rest are kept in time order.
+    assert [i["description"] for i in items] == ["code on screen", "a diagram"]
+    assert [i["time_seconds"] for i in items] == [0.0, 60.0]

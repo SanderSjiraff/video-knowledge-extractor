@@ -537,3 +537,33 @@ def get_screen_text(video_id: str, data_dir: Path = Path("data")) -> list[dict]:
     if row is None:
         return []
     return json.loads(row["text_json"])
+
+
+def save_frame_descriptions(video_id: str, items: list[dict], data_dir: Path = Path("data")) -> None:
+    """Store vision-model frame descriptions ({time_seconds, description})."""
+    with get_connection(data_dir) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS frame_descriptions ("
+            "video_id TEXT PRIMARY KEY, desc_json TEXT NOT NULL, captured_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO frame_descriptions (video_id, desc_json, captured_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(video_id) DO UPDATE SET desc_json = excluded.desc_json, "
+            "captured_at = excluded.captured_at",
+            (video_id, json.dumps(items, ensure_ascii=False), datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+
+
+def get_frame_descriptions(video_id: str, data_dir: Path = Path("data")) -> list[dict]:
+    """Load vision-model frame descriptions, or an empty list if none."""
+    with get_connection(data_dir) as conn:
+        try:
+            row = conn.execute(
+                "SELECT desc_json FROM frame_descriptions WHERE video_id = ?", (video_id,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return []
+    if row is None:
+        return []
+    return json.loads(row["desc_json"])

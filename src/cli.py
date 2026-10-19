@@ -129,6 +129,48 @@ def screen_text(limit: int | None, force: bool, frame_interval: float | None, ke
     )
 
 
+@cli.command("describe-frames")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max videos to process")
+@click.option("--force", is_flag=True, help="Re-describe even if descriptions already exist")
+@click.option("--max-frames", type=click.IntRange(min=1), default=None,
+              help="Max frames to describe per video (default from VISION_MAX_FRAMES)")
+@click.option("--keep-media", is_flag=True, help="Keep the downloaded video after capture")
+def describe_frames(limit: int | None, force: bool, max_frames: int | None, keep_media: bool) -> None:
+    """Describe on-screen visuals with a vision model (code, diagrams, UI).
+
+    Samples a few evenly-spaced frames from each video and asks a multimodal
+    model to describe what is on screen. Complements `screen-text` (OCR reads
+    text; this understands layout/diagrams). Requires ffmpeg plus a vision
+    model (local Ollama via VISION_MODEL, or a vision API). See README.
+    """
+    from youtube_knowledge_extractor.db import get_all_videos
+    from youtube_knowledge_extractor.vision import process_frame_descriptions
+
+    if max_frames is not None:
+        Config.VISION_MAX_FRAMES = int(max_frames)
+
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    videos = [
+        v for v in videos
+        if v.status is not None and str(v.status) != "inaccessible" and v.url
+    ]
+    if limit is not None:
+        videos = videos[:limit]
+    if not videos:
+        console.print("[yellow]No videos to process. Run 'discover' first.[/yellow]")
+        return
+
+    console.print(
+        f"[cyan]Describing on-screen visuals for {len(videos)} video(s) "
+        f"(provider: {Config.VISION_PROVIDER}, model: {Config.VISION_MODEL})...[/cyan]"
+    )
+    result = process_frame_descriptions(videos, force=force, keep_media=keep_media)
+    console.print(
+        f"[green]Frame descriptions done:[/green] {result.get('success', 0)} captured, "
+        f"{result.get('failed', 0)} failed."
+    )
+
+
 @cli.command()
 def cost() -> None:
     """Estimate cost for AI analysis."""

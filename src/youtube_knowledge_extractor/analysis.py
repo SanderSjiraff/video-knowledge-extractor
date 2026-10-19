@@ -13,7 +13,7 @@ import requests
 from rich.console import Console
 
 from .config import Config
-from .db import get_screen_text, get_transcript, update_video_status
+from .db import get_frame_descriptions, get_screen_text, get_transcript, update_video_status
 from .models import Insight, Transcript, Video, VideoAnalysis, VideoStatus
 
 
@@ -377,21 +377,40 @@ def _call_ollama(prompt: str, model: str) -> dict[str, Any]:
 
 
 def _screen_block(video: Video) -> str:
-    """Appendix of OCR'd on-screen text, or '' when none was captured.
+    """Appendix of on-screen information, or '' when nothing was captured.
 
-    Kept separate from the base prompt so videos without captured screen
-    text incur no extra cost.
+    Combines two opt-in channels — OCR'd on-screen text and vision-model frame
+    descriptions. Kept separate from the base prompt so videos without any
+    captured on-screen information incur no extra cost.
     """
-    items = get_screen_text(video.video_id, data_dir=Config.DATA_DIR)
-    if not items:
+    lines: list[str] = []
+
+    screen_items = get_screen_text(video.video_id, data_dir=Config.DATA_DIR)
+    if screen_items:
+        lines += [
+            "",
+            "TEKST PÅ SKJERMEN (fra OCR av videoframes — bruk denne for å fange opp tekst, kode, tall eller "
+            "diagrammer som ikke finnes i lyden):",
+        ]
+        lines += [
+            f"[{_format_timestamp(it.get('time_seconds', 0))}] {it.get('text', '')}"
+            for it in screen_items
+        ]
+
+    desc_items = get_frame_descriptions(video.video_id, data_dir=Config.DATA_DIR)
+    if desc_items:
+        lines += [
+            "",
+            "BESKRIVELSE AV SKJERMEN (fra en visjonsmodell — hva som vises på skjermen, f.eks. kode, "
+            "diagrammer eller UI, som ikke finnes i lyden):",
+        ]
+        lines += [
+            f"[{_format_timestamp(it.get('time_seconds', 0))}] {it.get('description', '')}"
+            for it in desc_items
+        ]
+
+    if not lines:
         return ""
-    lines = [
-        "",
-        "TEKST PÅ SKJERMEN (fra OCR av videoframes — bruk denne for å fange opp tekst, kode, tall eller "
-        "diagrammer som ikke finnes i lyden):",
-    ]
-    for it in items:
-        lines.append(f"[{_format_timestamp(it.get('time_seconds', 0))}] {it.get('text', '')}")
     return "\n".join(lines) + "\n"
 
 
