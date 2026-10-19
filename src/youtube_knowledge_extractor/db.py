@@ -66,6 +66,7 @@ def init_db(data_dir: Path = Path("data")) -> None:
                 channel TEXT NOT NULL DEFAULT '',
                 playlist_order INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'discovered',
+                platform TEXT NOT NULL DEFAULT 'youtube',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 error_message TEXT
@@ -105,6 +106,10 @@ def init_db(data_dir: Path = Path("data")) -> None:
             CREATE INDEX IF NOT EXISTS idx_videos_order ON videos(playlist_order);
             """
         )
+        # Migrate DBs created before the `platform` column existed.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(videos)")}
+        if "platform" not in cols:
+            conn.execute("ALTER TABLE videos ADD COLUMN platform TEXT NOT NULL DEFAULT 'youtube'")
         if _fts5_available():
             try:
                 conn.execute(
@@ -123,14 +128,15 @@ def save_video(video: Video, data_dir: Path = Path("data")) -> None:
             """
             INSERT INTO videos
             (video_id, title, url, duration_seconds, channel, playlist_order,
-             status, created_at, updated_at, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             status, platform, created_at, updated_at, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = CASE WHEN excluded.title = '' THEN videos.title ELSE excluded.title END,
                 url = excluded.url,
                 duration_seconds = CASE WHEN excluded.duration_seconds = 0 THEN videos.duration_seconds ELSE excluded.duration_seconds END,
                 channel = CASE WHEN excluded.channel = '' THEN videos.channel ELSE excluded.channel END,
                 playlist_order = excluded.playlist_order,
+                platform = CASE WHEN excluded.platform = '' THEN videos.platform ELSE excluded.platform END,
                 updated_at = excluded.updated_at,
                 status = CASE WHEN videos.status = 'inaccessible' AND excluded.status = 'discovered' THEN excluded.status ELSE videos.status END,
                 error_message = CASE WHEN videos.status = 'inaccessible' AND excluded.status = 'discovered' THEN NULL ELSE videos.error_message END
@@ -143,6 +149,7 @@ def save_video(video: Video, data_dir: Path = Path("data")) -> None:
                 video.channel,
                 video.playlist_order,
                 video.status.value,
+                video.platform,
                 video.created_at.isoformat(),
                 video.updated_at.isoformat(),
                 video.error_message,
@@ -409,6 +416,7 @@ def _search_transcripts_fallback(query: str, limit: int, data_dir: Path = Path("
 
 
 def _row_to_video(row: sqlite3.Row) -> Video:
+    platform = row["platform"] if "platform" in row.keys() else "youtube"
     return Video(
         video_id=row["video_id"],
         title=row["title"],
@@ -417,6 +425,7 @@ def _row_to_video(row: sqlite3.Row) -> Video:
         channel=row["channel"],
         playlist_order=row["playlist_order"],
         status=VideoStatus(row["status"]),
+        platform=platform or "youtube",
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
         error_message=row["error_message"],

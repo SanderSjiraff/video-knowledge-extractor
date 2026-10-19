@@ -23,7 +23,7 @@ class VideoStatus(str, Enum):
 
 @dataclass
 class Video:
-    """Represents a discovered YouTube video."""
+    """Represents a discovered video (YouTube, TikTok, or Instagram)."""
 
     video_id: str
     title: str
@@ -32,6 +32,7 @@ class Video:
     channel: str
     playlist_order: int
     status: VideoStatus = VideoStatus.DISCOVERED
+    platform: str = "youtube"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     error_message: Optional[str] = None

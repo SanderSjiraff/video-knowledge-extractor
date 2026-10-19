@@ -110,10 +110,25 @@ def test_note_filename_is_stable_and_unique_per_video():
     assert notes.note_filename(a) != notes.note_filename(b)
 
 
+def test_video_to_markdown_includes_frontmatter():
+    v, a = video("abc123"), _mk_analysis("abc123")
+    md = notes.video_to_markdown(v, a)
+    assert md.startswith("---\n")
+    # Frontmatter block must close before the title heading.
+    fm = md.split("---", 2)[1]
+    assert "video_id: abc123" in fm
+    assert "platform: youtube" in fm
+    assert "url: \"https://www.youtube.com/watch?v=abc123\"" in fm
+    assert "recommendation: watch" in fm
+    assert "relevance: 4" in fm
+    assert "tags:" in fm and "- \"transformer\"" in fm
+    assert "# Bygge en AI-agent" in md
+
+
 def test_video_to_markdown_includes_source_links():
     v, a = video("abc123"), _mk_analysis("abc123")
     md = notes.video_to_markdown(v, a)
-    assert md.startswith("# Bygge en AI-agent")
+    assert "# Bygge en AI-agent" in md
     assert "[Se på YouTube](https://www.youtube.com/watch?v=abc123)" in md
     assert "relevans 4/5" in md
     assert "**Anbefaling:** watch" in md
@@ -193,14 +208,17 @@ def test_export_markdown_writes_note_per_video_and_index(tmp_path):
 
     files = notes.export_markdown(data_dir=tmp_path)
     names = sorted(f.name for f in files)
-    assert len(names) == 3  # 2 notes + 1 index
-    assert "INDEKS.md" in names
+    assert len(names) == 4  # 2 notes + index + concentrate
+    assert "INDEKS.md" in names and "KUNNSKAP.md" in names
     out_dir = tmp_path / "exports" / "markdown"
     note = (out_dir / "Bygge-en-AI-agent.abc123.md").read_text(encoding="utf-8")
-    assert "Opp A" in note
+    assert "Opp A" in note and note.startswith("---\n")
     index = (out_dir / "INDEKS.md").read_text(encoding="utf-8")
     assert "Tema" in index
     assert "abc123" in index and "def456" in index
+    concentrate = (out_dir / "KUNNSKAP.md").read_text(encoding="utf-8")
+    assert "# Kunnskapskonsentrat" in concentrate
+    assert "Tema" in concentrate
 
 
 def test_export_markdown_falls_back_when_video_metadata_missing(tmp_path):
@@ -211,10 +229,51 @@ def test_export_markdown_falls_back_when_video_metadata_missing(tmp_path):
     assert "Ukjent" in ghost.read_text(encoding="utf-8")
 
 
-def test_export_markdown_empty_library_writes_index_only(tmp_path):
+def test_export_markdown_empty_library_writes_overviews_only(tmp_path):
     db.init_db(tmp_path)
     files = notes.export_markdown(data_dir=tmp_path)
-    assert [f.name for f in files] == ["INDEKS.md"]
+    assert sorted(f.name for f in files) == ["INDEKS.md", "KUNNSKAP.md"]
+    concentrate = (tmp_path / "exports" / "markdown" / "KUNNSKAP.md").read_text(encoding="utf-8")
+    assert "fra 0 analyserte videoer" in concentrate
+
+
+def test_concentrate_deduplicates_and_orders_verified_first():
+    v1, v2 = video("abc123"), video("def456")
+    a1 = VideoAnalysis(
+        video_id="abc123", summary_no="s", relevance_score=5,
+        insights=[
+            Insight(insight="Delt innsikt", explanation="e", timestamp="01:00",
+                    confidence="high", quote="q", verified=True),
+            Insight(insight="Unik i video 1", explanation="e", confidence="low"),
+        ],
+        techniques_tools=["transformer", "RAG"],
+        actionable_steps=["Steg A"],
+    )
+    a2 = VideoAnalysis(
+        video_id="def456", summary_no="s", relevance_score=2,
+        insights=[
+            # Duplicate of a1's first insight (same text) but unverified.
+            Insight(insight="Delt innsikt", explanation="e", confidence="medium"),
+            Insight(insight="Unik i video 2", explanation="e", confidence="high",
+                    quote="q2", verified=True),
+        ],
+        techniques_tools=["RAG", "pytorch"],
+        actionable_steps=["Steg B"],
+    )
+    md = notes.knowledge_concentrate_markdown([v1, v2], [a1, a2])
+    # The shared insight appears exactly once (deduplicated).
+    assert md.count("**Bygge en AI-agent**") >= 1
+    shared_lines = [l for l in md.splitlines() if "Delt innsikt" in l]
+    assert len(shared_lines) == 1
+    # Verified insight (✅) is listed before the low/unverified-only ones.
+    verified_pos = md.find("Unik i video 2")
+    unverified_pos = md.find("Unik i video 1")
+    assert verified_pos != -1 and unverified_pos != -1
+    assert verified_pos < unverified_pos
+    # Techniques deduplicated across videos.
+    techniques_section = md.split("## Teknikker og verktøy (samlet)")[1].split("##")[0]
+    assert techniques_section.count("RAG") == 1
+    assert "pytorch" in techniques_section and "transformer" in techniques_section
 
 
 # ---------------------------------------------------------------------------

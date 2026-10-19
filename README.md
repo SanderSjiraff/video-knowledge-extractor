@@ -87,7 +87,7 @@ python src/cli.py dashboard
 | `analyze --limit N` | Sender inntil N ventende transkripter til modellen. Lagrede analyser hoppes over. |
 | `analyze --limit N --force` | Analyserer også videoer som har en lagret analyse. Dette kan koste på nytt. |
 | `synthesize [--force]` | Lag ÉN samlet syntese over alle analyserte videoer: felles tema, motsetninger og unik kunnskap. Én modellkall med kostnadsestimat; lastes fra cache uten `--force`. |
-| `export` | Eksporter alle analyserte videoer som Markdown-notater med klikkbare kildelenker til YouTube (video + tidsstempel), plus `INDEKS.md` med syntese og rangert videoliste. Ingen modellkall; skriver til `data/exports/markdown/`. |
+| `export` | Eksporter alle analyserte videoer som Markdown-notater (med YAML-metadata og klikkbare kildelenker til video + tidsstempel), plus `INDEKS.md` (syntese + rangert videoliste) og `KUNNSKAP.md` (kompakt, deduplisert kunnskapskonsentrat optimert for inntasting som kontekst til en språkmodell). Ingen modellkall; skriver til `data/exports/markdown/`. |
 | `status` | Viser lagret behandlingsstatus. |
 | `dashboard` | Starter lokal visning av videoer, analyser, fulltekst-søk (Søk), samlet syntese (Syntese), rangering og eksport (JSON + Markdown). |
 
@@ -108,7 +108,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Hvert innsikt ber modellen om et kort sitat fra transkriptet. Sitater som ikke finnes i transkriptet markeres ⚠️ og senkes til lav konfidens (sannsynlig hallusinasjon), og tidsstempler som ligger langt fra sitatets faktiske plass justeres automatisk. Dashboardet viser tidsstempler som klikkbare YouTube-lenker.
 - Fulltekst-søket (Søk i dashboardet) bruker SQLite FTS5 over hele transkriptinnholdet med bm25-rangering og uthevet snutt. Hvis SQLite-bygget mangler FTS5, brukes automatisk delstrekk-søk som reserve. Nye transkripter indekseres ved lagring; eksisterende databaser bygges om ved første søk.
 - Samlet syntese (Syntese) er ett enkelt modellkall over kompakte per-video-sammendrag og krever minst to analyserte videoer. Den cache-reses i databasen og gjengis uten nytt modellkall med mindre du bruker `--force` eller videosettet har endret seg.
-- Markdown-eksporten (`export`, også tilgjengelig som knapp under Eksport i dashboardet) lager ingen modellkall; den formaterer kun lagrede analyser til Obsidian/OpenCode-vennlige notater med kildelenker. Filnavnet er deterministisk (tittel + video-id), så omgjøring skriver over de samme filene.
+- Markdown-eksporten (`export`, også tilgjengelig som knapp under Eksport i dashboardet) lager ingen modellkall; den formaterer kun lagrede analyser til Obsidian/OpenCode-vennlige notater med kildelenker. Hvert notat har YAML-metadata (frontmatter) med video_id, platform, url, skår og tags for filtrering og parsing. `KUNNSKAP.md` er et kompakt, deduplisert konsentrat beregnet på inntasting som kontekst til en språkmodell. Filnavnet er deterministisk (tittel + video-id), så omgjøring skriver over de samme filene.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
