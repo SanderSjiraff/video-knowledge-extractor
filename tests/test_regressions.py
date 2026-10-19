@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, db, discovery, orchestrator
+from youtube_knowledge_extractor import analysis, cross_video, db, discovery, orchestrator
 from youtube_knowledge_extractor.models import (
     Insight,
     Transcript,
@@ -455,3 +455,91 @@ def test_parse_and_format_timestamp_roundtrip():
     assert analysis._parse_timestamp(None) is None
     assert analysis._format_timestamp(120) == "02:00"
     assert analysis._format_timestamp(3600) == "01:00:00"
+
+
+def _make_analysis(vid, n_insights=1):
+    return VideoAnalysis(
+        video_id=vid,
+        summary_no="s",
+        insights=[Insight(insight=f"i{k}", explanation="e", timestamp="00:00", confidence="high") for k in range(n_insights)],
+        techniques_tools=["python"],
+        actionable_steps=["a"],
+        relevance_score=3, depth_score=3, practical_score=4, redundancy_score=1,
+        recommendation="watch", recommendation_justification="g",
+    )
+
+
+def test_build_video_digests_caps_and_uses_meta():
+    a = _make_analysis("v1", n_insights=10)
+    digests = cross_video.build_video_digests([a], {"v1": {"title": "My Title"}})
+    assert len(digests) == 1
+    assert digests[0]["video_id"] == "v1"
+    assert digests[0]["title"] == "My Title"
+    assert len(digests[0]["innsikter"]) == 6  # capped
+
+
+def test_synthesize_playlist_requires_two_videos():
+    with pytest.raises(ValueError):
+        cross_video.synthesize_playlist([_make_analysis("v1")])
+
+
+def test_synthesize_playlist_validates_invented_video_ids(monkeypatch):
+    good = {
+        "theme_no": "AI", "shared_topics": ["python"], "contradictions": [],
+        "unique_knowledge": [{"video_id": "v1", "knowledge": "x"}], "gaps": [],
+        "watch_order": [{"video_id": "v2", "reason": "y"}], "recommendation": "ok",
+    }
+    monkeypatch.setattr(cross_video, "call_llm", lambda *a, **kw: good)
+    result = cross_video.synthesize_playlist([_make_analysis("v1"), _make_analysis("v2")])
+    assert result["theme_no"] == "AI"
+
+    bad = dict(good)
+    bad["unique_knowledge"] = [{"video_id": "v9", "knowledge": "x"}]  # invented id
+    monkeypatch.setattr(cross_video, "call_llm", lambda *a, **kw: bad)
+    with pytest.raises(ValueError):
+        cross_video.synthesize_playlist([_make_analysis("v1"), _make_analysis("v2")])
+
+
+def test_save_load_synthesis_roundtrip(tmp_path):
+    db.save_synthesis({"theme_no": "x", "video_ids": ["v1"], "created_at": "now"}, tmp_path)
+    assert db.load_synthesis(tmp_path)["theme_no"] == "x"
+    db.save_synthesis({"theme_no": "y", "video_ids": ["v1"], "created_at": "now2"}, tmp_path)
+    assert db.load_synthesis(tmp_path)["theme_no"] == "y"
+
+
+def test_run_synthesis_end_to_end_mocked(tmp_path, monkeypatch):
+    db.init_db(tmp_path)
+    now = datetime.utcnow().isoformat()
+    for vid in ("v1", "v2"):
+        db.save_video(video(vid), tmp_path)
+        with db.get_connection(tmp_path) as conn:
+            conn.execute(
+                "INSERT INTO analyses (video_id, summary_no, insights_json, techniques_tools_json, "
+                "actionable_steps_json, relevance_score, depth_score, practical_score, redundancy_score, "
+                "recommendation, recommendation_justification, key_sections_json, "
+                "estimated_key_watch_minutes, low_confidence, confidence_reason, analyzed_at, "
+                "llm_model, estimated_tokens_in, estimated_tokens_out) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (vid, "s", "[]", "[]", "[]", 3, 3, 4, 1, "watch", "g", "[]", 1.0, 0, "", now, "m", 0, 0),
+            )
+            conn.commit()
+    monkeypatch.setattr(orchestrator.Config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(orchestrator.Config, "USE_OLLAMA", False)
+    monkeypatch.setattr(orchestrator.Config, "LLM_MODEL", "gpt-4o-mini")
+    monkeypatch.setattr(orchestrator.Config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(orchestrator.Config, "LLM_REASONING_EFFORT", "")
+    monkeypatch.setattr(orchestrator.Config, "LLM_INPUT_COST_PER_MILLION", None)
+    monkeypatch.setattr(orchestrator.Config, "LLM_OUTPUT_COST_PER_MILLION", None)
+    monkeypatch.setattr(orchestrator.Config, "SPENDING_LIMIT_USD", 1.0)
+
+    def fake_synthesize(analyses, video_meta, model=None):
+        return {
+            "theme_no": "AI", "shared_topics": ["python"], "contradictions": [],
+            "unique_knowledge": [{"video_id": "v1", "knowledge": "x"}], "gaps": [],
+            "watch_order": [{"video_id": "v2", "reason": "y"}], "recommendation": "ok",
+        }
+    monkeypatch.setattr(orchestrator, "synthesize_playlist", fake_synthesize)
+    result = orchestrator.run_synthesis(force=True)
+    assert result is not None
+    assert sorted(result["video_ids"]) == ["v1", "v2"]
+    assert db.load_synthesis(tmp_path)["theme_no"] == "AI"

@@ -274,26 +274,31 @@ def estimate_analysis_cost(transcript: Transcript, model: str = "gpt-4o-mini") -
         prompts = build_chunk_prompts(chunks) + [build_merge_prompt([_SAMPLE_PARTIAL] * len(chunks))]
         tokens_out = len(chunks) * MAP_OUTPUT_ESTIMATE + Config.LLM_MAX_OUTPUT_TOKENS
     tokens_in = sum(estimate_tokens(p) for p in prompts)
-
-    # Rough pricing (USD per 1M tokens)
-    pricing = {
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-        "gpt-4o": {"input": 2.50, "output": 10.00},
-    }
-    if Config.USE_OLLAMA:
-        p = {"input": 0.0, "output": 0.0}
-    elif Config.LLM_INPUT_COST_PER_MILLION is not None:
-        p = {"input": float(Config.LLM_INPUT_COST_PER_MILLION), "output": float(Config.LLM_OUTPUT_COST_PER_MILLION)}
-    elif model in pricing:
-        p = pricing[model]
-    else:
-        raise ValueError(f"No reference cost rate for remote model {model!r}; configure both LLM cost rates")
-    cost = (tokens_in * p["input"] + tokens_out * p["output"]) / 1_000_000
+    rates = cost_rates(model)
+    cost = (tokens_in * rates["input"] + tokens_out * rates["output"]) / 1_000_000
     return {
         "tokens_in": tokens_in,
         "tokens_out": tokens_out,
         "estimated_cost_usd": cost,
     }
+
+
+def cost_rates(model: str) -> dict[str, float]:
+    """USD per 1M input/output tokens for a model, honoring explicit config.
+
+    Shared by the per-video cost estimate and the playlist-synthesis estimate.
+    """
+    pricing = {
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+    }
+    if Config.USE_OLLAMA:
+        return {"input": 0.0, "output": 0.0}
+    if Config.LLM_INPUT_COST_PER_MILLION is not None:
+        return {"input": float(Config.LLM_INPUT_COST_PER_MILLION), "output": float(Config.LLM_OUTPUT_COST_PER_MILLION)}
+    if model in pricing:
+        return dict(pricing[model])
+    raise ValueError(f"No reference cost rate for remote model {model!r}; configure both LLM cost rates")
 
 
 def call_llm(prompt: str, model: str | None = None) -> dict[str, Any]:

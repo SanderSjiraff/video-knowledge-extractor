@@ -18,8 +18,10 @@ from youtube_knowledge_extractor.db import (
     get_connection,
     init_db,
     search_transcripts,
+    load_synthesis,
 )
 from youtube_knowledge_extractor.models import VideoStatus
+from youtube_knowledge_extractor.orchestrator import run_synthesis
 
 
 st.set_page_config(
@@ -216,6 +218,78 @@ def render_search():
         st.markdown(f"**{title}** — {channel}\n\n{hit['snippet']}\n\n[Åpne video]({deep_link})")
 
 
+def render_synthesis():
+    st.title("🧩 Syntese av samlingen")
+    st.caption("Én samlet analyse: felles tema, motsetninger og unik kunnskap fra flere videoer.")
+
+    if st.button("🔄 Generer / oppdater syntese"):
+        with st.spinner("Genererer syntese (modellkall)..."):
+            try:
+                run_synthesis(force=True)
+            except Exception as exc:
+                st.error(f"Syntesen feilet: {exc}")
+        st.rerun()
+
+    synth = load_synthesis(data_dir=Config.DATA_DIR)
+    if not synth:
+        st.info("Ingen syntese ennå. Klikk «Generer / oppdater» (krever minst to analyserte videoer).")
+        return
+
+    analyzed_now = sorted(a["video_id"] for a in _all_analyses())
+    covered = sorted(synth.get("video_ids", []))
+    if analyzed_now != covered:
+        st.warning("Syntesen er basert på et annet sett av videoer enn nå. Klikk «Generer / oppdater» for å friske opp.")
+
+    st.markdown("### Samlet tema")
+    st.write(synth.get("theme_no", ""))
+
+    st.markdown("### Felles tema (overlapp)")
+    shared = synth.get("shared_topics", [])
+    if shared:
+        for t in shared:
+            st.write(f"- {t}")
+    else:
+        st.write("—")
+
+    st.markdown("### Motsetninger")
+    cons = synth.get("contradictions", [])
+    if cons:
+        for c in cons:
+            st.write(f"- **{c.get('topic')}** ({', '.join(c.get('videos', []))}): {c.get('note')}")
+    else:
+        st.write("Ingen tydelige motsetninger.")
+
+    st.markdown("### Unik kunnskap per video")
+    uniq = synth.get("unique_knowledge", [])
+    if uniq:
+        for u in uniq:
+            st.write(f"- **{u.get('video_id')}**: {u.get('knowledge')}")
+    else:
+        st.write("—")
+
+    st.markdown("### Mangler (gaps)")
+    gaps = synth.get("gaps", [])
+    if gaps:
+        for g in gaps:
+            st.write(f"- {g}")
+    else:
+        st.write("—")
+
+    st.markdown("### Anbefalt sesjonsrekkefølge")
+    order = synth.get("watch_order", [])
+    if order:
+        for w in order:
+            st.write(f"- **{w.get('video_id')}**: {w.get('reason')}")
+    else:
+        st.write("—")
+
+    if synth.get("recommendation"):
+        st.markdown("### Anbefaling")
+        st.write(synth["recommendation"])
+
+    st.caption(f"Generert: {synth.get('created_at', '')} · modell: {synth.get('llm_model', '')} · {len(covered)} videoer")
+
+
 def render_topics():
     st.title("📚 Temaer")
     st.info("Temaklyngevisning er ikke implementert ennå.")
@@ -249,6 +323,7 @@ def render_exports():
 PAGES = {
     "Oversikt": render_overview,
     "Søk": render_search,
+    "Syntese": render_synthesis,
     "Ranking": render_ranking,
     "Temaer": render_topics,
     "Eksport": render_exports,

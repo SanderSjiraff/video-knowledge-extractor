@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,16 +12,23 @@ from rich.table import Table
 
 from youtube_knowledge_extractor.config import Config
 from youtube_knowledge_extractor.db import (
+    get_all_analyses,
     get_all_videos,
     get_analyzed_video_ids,
     get_progress_stats,
     get_transcript,
     init_db,
+    load_synthesis,
+    save_synthesis,
 )
 from youtube_knowledge_extractor.discovery import discover_playlist
 from youtube_knowledge_extractor.transcripts import fetch_transcript, process_transcripts
 from youtube_knowledge_extractor.whisper_transcripts import process_whisper_transcripts
 from youtube_knowledge_extractor.analysis import analyze_video, estimate_analysis_cost
+from youtube_knowledge_extractor.cross_video import (
+    estimate_synthesis_cost,
+    synthesize_playlist,
+)
 from youtube_knowledge_extractor.models import Video, VideoAnalysis, VideoStatus
 
 
@@ -120,6 +128,54 @@ def run_cost_estimate(videos: list[Video] | None = None) -> dict[str, Any]:
         "spending_limit_usd": Config.SPENDING_LIMIT_USD,
         "model": model,
     }
+
+
+def run_synthesis(force: bool = False) -> dict[str, Any] | None:
+    """Run Phase 4: synthesize a combined view across all analyzed videos."""
+    console.print("\n[bold blue]Phase 4: Playlist Synthesis[/bold blue]")
+    Config.validate()
+    analyses = get_all_analyses(data_dir=Config.DATA_DIR)
+    if len(analyses) < 2:
+        console.print("[yellow]Need at least two analyzed videos to synthesize. Run 'analyze' first.[/yellow]")
+        return None
+
+    current_ids = sorted(a.video_id for a in analyses)
+    cached = load_synthesis(data_dir=Config.DATA_DIR)
+    if not force and cached and sorted(cached.get("video_ids", [])) == current_ids:
+        console.print("[cyan]Using cached synthesis (pass --force to regenerate).[/cyan]")
+        return cached
+
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    video_meta = {
+        v.video_id: {"title": v.title, "channel": v.channel, "url": v.url}
+        for v in videos
+    }
+
+    est = estimate_synthesis_cost(analyses, video_meta)
+    if est["estimated_cost_usd"] > Config.SPENDING_LIMIT_USD:
+        console.print(
+            f"[red]ERROR: Estimated synthesis cost ${est['estimated_cost_usd']:.4f} exceeds "
+            f"spending limit ${Config.SPENDING_LIMIT_USD:.2f}. Aborting.[/red]"
+        )
+        return None
+    if est["estimated_cost_usd"] > 0 and not Config.USE_OLLAMA and not Config.LLM_API_KEY:
+        console.print("[red]ERROR: No API key configured. Set LLM_API_KEY or enable Ollama.[/red]")
+        return None
+
+    console.print(
+        f"[cyan]Synthesizing {len(analyses)} videos with model: {Config.get_llm_model()} "
+        f"(~${est['estimated_cost_usd']:.4f} est.)[/cyan]"
+    )
+    raw = synthesize_playlist(analyses, video_meta)
+    synthesis = {
+        **raw,
+        "video_ids": current_ids,
+        "llm_model": Config.get_llm_model(),
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    save_synthesis(synthesis, data_dir=Config.DATA_DIR)
+    console.print(f"[green]Synthesis OK for {len(analyses)} videos[/green]")
+    return synthesis
 
 
 def run_analysis(

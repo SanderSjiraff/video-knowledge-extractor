@@ -26,6 +26,7 @@ from youtube_knowledge_extractor.orchestrator import (
     run_cost_estimate,
     run_dashboard,
     run_discovery,
+    run_synthesis,
     run_transcripts,
     run_whisper_transcripts,
     print_status,
@@ -111,6 +112,18 @@ def analyze(limit: int | None, force: bool) -> None:
         run_analysis(dry_run_limit=limit, force=force)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+@cli.command()
+@click.option("--force", is_flag=True, help="Regenerate even if a cached synthesis exists")
+def synthesize(force: bool) -> None:
+    """Create a combined playlist synthesis (overlap, contradictions, unique knowledge)."""
+    try:
+        result = run_synthesis(force=force)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if result:
+        console.print(f"[green]Saved synthesis for {len(result.get('video_ids', []))} videos.[/green]")
 
 
 @cli.command()

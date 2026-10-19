@@ -174,6 +174,50 @@ def get_analyzed_video_ids(data_dir: Path = Path("data")) -> set[str]:
         return {row[0] for row in conn.execute("SELECT video_id FROM analyses")}
 
 
+def get_all_analyses(data_dir: Path = Path("data")) -> list[VideoAnalysis]:
+    """Load all stored analyses as VideoAnalysis objects (with insights)."""
+    with get_connection(data_dir) as conn:
+        rows = conn.execute("SELECT * FROM analyses").fetchall()
+    out: list[VideoAnalysis] = []
+    for row in rows:
+        insights = [
+            Insight(
+                insight=i.get("insight", ""),
+                explanation=i.get("explanation", ""),
+                timestamp=i.get("timestamp"),
+                confidence=i.get("confidence", "medium"),
+                quote=i.get("quote"),
+                verified=bool(i.get("verified", False)),
+                verification_reason=i.get("verification_reason", ""),
+            )
+            for i in json.loads(row["insights_json"])
+        ]
+        out.append(
+            VideoAnalysis(
+                video_id=row["video_id"],
+                summary_no=row["summary_no"],
+                insights=insights,
+                techniques_tools=json.loads(row["techniques_tools_json"]),
+                actionable_steps=json.loads(row["actionable_steps_json"]),
+                relevance_score=row["relevance_score"],
+                depth_score=row["depth_score"],
+                practical_score=row["practical_score"],
+                redundancy_score=row["redundancy_score"],
+                recommendation=row["recommendation"],
+                recommendation_justification=row["recommendation_justification"],
+                key_sections=json.loads(row["key_sections_json"]),
+                estimated_key_watch_minutes=row["estimated_key_watch_minutes"],
+                low_confidence=bool(row["low_confidence"]),
+                confidence_reason=row["confidence_reason"],
+                analyzed_at=datetime.fromisoformat(row["analyzed_at"]),
+                llm_model=row["llm_model"],
+                estimated_tokens_in=row["estimated_tokens_in"],
+                estimated_tokens_out=row["estimated_tokens_out"],
+            )
+        )
+    return out
+
+
 def update_video_status(
     video_id: str,
     status: VideoStatus,
@@ -423,3 +467,34 @@ def _format_duration(seconds: int) -> str:
     if h > 0:
         return f"{h}h {m}m {s}s"
     return f"{m}m {s}s"
+
+
+def save_synthesis(synthesis: dict[str, Any], data_dir: Path = Path("data")) -> None:
+    """Store the latest playlist synthesis (single row keyed by 'default')."""
+    created = synthesis.get("created_at") or datetime.utcnow().isoformat()
+    with get_connection(data_dir) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS playlist_synthesis ("
+            "key TEXT PRIMARY KEY, synthesis_json TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO playlist_synthesis (key, synthesis_json, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET synthesis_json = excluded.synthesis_json, "
+            "created_at = excluded.created_at",
+            ("default", json.dumps(synthesis, ensure_ascii=False), created),
+        )
+        conn.commit()
+
+
+def load_synthesis(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
+    """Load the latest playlist synthesis, or None if none is stored yet."""
+    with get_connection(data_dir) as conn:
+        try:
+            row = conn.execute(
+                "SELECT synthesis_json FROM playlist_synthesis WHERE key = 'default'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return None
+    if row is None:
+        return None
+    return json.loads(row["synthesis_json"])

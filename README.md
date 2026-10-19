@@ -86,8 +86,9 @@ python src/cli.py dashboard
 | `cost` | Viser et token- og prisestimat uten modellkall. |
 | `analyze --limit N` | Sender inntil N ventende transkripter til modellen. Lagrede analyser hoppes over. |
 | `analyze --limit N --force` | Analyserer også videoer som har en lagret analyse. Dette kan koste på nytt. |
+| `synthesize [--force]` | Lag ÉN samlet syntese over alle analyserte videoer: felles tema, motsetninger og unik kunnskap. Én modellkall med kostnadsestimat; lastes fra cache uten `--force`. |
 | `status` | Viser lagret behandlingsstatus. |
-| `dashboard` | Starter lokal visning av videoer, analyser, fulltekst-søk (Søk), rangering og JSON-eksport. |
+| `dashboard` | Starter lokal visning av videoer, analyser, fulltekst-søk (Søk), samlet syntese (Syntese), rangering og JSON-eksport. |
 
 Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt heltall.
 
@@ -105,6 +106,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Lange transkripter deles i overlappende deler som analyseres hver for seg og slås sammen (map-reduce), slik at hele videoen dekkes uten avkorting. Antall deler – og dermed modellkall og kostnad – øker med videoens lengde; kortere videoer bruker fortsatt ett enkelt kall.
 - Hvert innsikt ber modellen om et kort sitat fra transkriptet. Sitater som ikke finnes i transkriptet markeres ⚠️ og senkes til lav konfidens (sannsynlig hallusinasjon), og tidsstempler som ligger langt fra sitatets faktiske plass justeres automatisk. Dashboardet viser tidsstempler som klikkbare YouTube-lenker.
 - Fulltekst-søket (Søk i dashboardet) bruker SQLite FTS5 over hele transkriptinnholdet med bm25-rangering og uthevet snutt. Hvis SQLite-bygget mangler FTS5, brukes automatisk delstrekk-søk som reserve. Nye transkripter indekseres ved lagring; eksisterende databaser bygges om ved første søk.
+- Samlet syntese (Syntese) er ett enkelt modellkall over kompakte per-video-sammendrag og krever minst to analyserte videoer. Den cache-reses i databasen og gjengis uten nytt modellkall med mindre du bruker `--force` eller videosettet har endret seg.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
@@ -153,7 +155,7 @@ src/youtube_knowledge_extractor/
   db.py                             SQLite-lagring og FTS5-fulltekst-søk
   orchestrator.py                    Arbeidsflyt og estimatgrense
   dashboard.py                       Streamlit-visning, fulltekst-søk og eksport
-  cross_video.py                    Hjelpefunksjoner for temaer og rangering
+  cross_video.py                    Hjelpefunksjoner for temaer, rangering og samlet syntese
   models.py                         Datamodeller
 tests/                              Tester uten live modellkall
 ```
