@@ -126,7 +126,33 @@ def test_shared_prompt_preserves_timestamps_and_flags_truncation():
     assert truncated is True
     assert "00:20" in prompt
     assert "upålitelig" in prompt.lower()
-    assert analysis.estimate_analysis_cost(transcript)["tokens_in"] == analysis.estimate_tokens(prompt)
+    # A short, single-chunk transcript's cost estimate matches its prompt tokens.
+    short = Transcript("x", "en", False, [TranscriptSegment(20, 1, "kort tekst")])
+    short_prompt, short_truncated = analysis.build_analysis_prompt(short)
+    assert short_truncated is False
+    assert analysis.estimate_analysis_cost(short)["tokens_in"] == analysis.estimate_tokens(short_prompt)
+
+
+def test_chunk_transcript_never_drops_content_and_stays_within_budget():
+    segments = [TranscriptSegment(i, 1, f"ord{i} " * 5) for i in range(400)]
+    transcript = Transcript("x", "en", False, segments)
+    chunks = analysis.chunk_transcript(transcript)
+    assert len(chunks) > 1
+    joined = "\n".join(chunks)
+    for i in range(400):
+        assert f"ord{i}" in joined
+    for chunk in chunks:
+        assert len(chunk) <= analysis.MAX_TRANSCRIPT_CHARS
+
+
+def test_chunk_transcript_overlaps_consecutive_chunks():
+    segments = [TranscriptSegment(i, 1, f"ord{i} " * 5) for i in range(400)]
+    transcript = Transcript("x", "en", False, segments)
+    chunks = analysis.chunk_transcript(transcript)
+    assert len(chunks) > 1
+    for i in range(len(chunks) - 1):
+        last_word = chunks[i].split()[-1]
+        assert last_word in chunks[i + 1].split()
 
 
 def test_invalid_llm_shape_is_rejected():
@@ -281,12 +307,24 @@ def test_invalid_numeric_output_marks_failed_without_saving(tmp_path, monkeypatc
         assert conn.execute("SELECT COUNT(*) FROM analyses").fetchone()[0] == 0
 
 
-def test_truncated_transcript_forces_low_confidence(tmp_path, monkeypatch):
+def test_long_transcript_is_chunked_and_fully_analyzed(tmp_path, monkeypatch):
     v = prepare_analysis_db(tmp_path, monkeypatch, transcript_text="A" * 16000)
-    monkeypatch.setattr(analysis, "call_llm", lambda prompt: valid_analysis_payload())
+    prompts: list[str] = []
+
+    def fake_llm(prompt):
+        prompts.append(prompt)
+        return valid_analysis_payload()
+
+    monkeypatch.setattr(analysis, "call_llm", fake_llm)
     result = analysis.analyze_video(v)
-    assert result and result.low_confidence is True
-    assert "truncated" in result.confidence_reason.lower()
+    # 16000 chars > 1 chunk -> 2 map calls + 1 merge call, with no truncation.
+    assert result is not None
+    assert len(prompts) == 3
+    # No content lost: the two map prompts together cover the whole transcript.
+    assert sum(p.count("A") for p in prompts[:2]) >= 16000
+    # Chunking no longer forces a low-confidence / truncation flag.
+    assert result.low_confidence is False
+    assert "truncated" not in result.confidence_reason.lower()
 
 
 def test_positive_unrounded_cost_over_zero_budget_blocks_requests(tmp_path, monkeypatch):

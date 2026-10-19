@@ -102,7 +102,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Tokenberegningen er en grov tegnbasert tilnærming. Innebygde referansepriser for enkelte kjente modeller kan være utdaterte. Eksplisitte prisfelt overstyrer dem. Andre leverandørgebyrer inngår ikke.
 - `LLM_MAX_OUTPUT_TOKENS` begrenser forespurt svarlengde og brukes i estimatet. For lav grense kan gi avbrutt eller ugyldig JSON.
 - `RATE_LIMIT_SECONDS` styrer pausen mellom analyseforsøk. Også mislykkede API-kall kan bli fakturert.
-- Lange transkripter avkortes før analyse. Slike analyser merkes med lav konfidens, og dekker ikke nødvendigvis hele videoen.
+- Lange transkripter deles i overlappende deler som analyseres hver for seg og slås sammen (map-reduce), slik at hele videoen dekkes uten avkorting. Antall deler – og dermed modellkall og kostnad – øker med videoens lengde; kortere videoer bruker fortsatt ett enkelt kall.
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
