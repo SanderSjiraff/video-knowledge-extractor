@@ -13,7 +13,7 @@ import requests
 from rich.console import Console
 
 from .config import Config
-from .db import get_transcript, update_video_status
+from .db import get_screen_text, get_transcript, update_video_status
 from .models import Insight, Transcript, Video, VideoAnalysis, VideoStatus
 
 
@@ -376,6 +376,25 @@ def _call_ollama(prompt: str, model: str) -> dict[str, Any]:
     return json.loads(content.strip())
 
 
+def _screen_block(video: Video) -> str:
+    """Appendix of OCR'd on-screen text, or '' when none was captured.
+
+    Kept separate from the base prompt so videos without captured screen
+    text incur no extra cost.
+    """
+    items = get_screen_text(video.video_id, data_dir=Config.DATA_DIR)
+    if not items:
+        return ""
+    lines = [
+        "",
+        "TEKST PÅ SKJERMEN (fra OCR av videoframes — bruk denne for å fange opp tekst, kode, tall eller "
+        "diagrammer som ikke finnes i lyden):",
+    ]
+    for it in items:
+        lines.append(f"[{_format_timestamp(it.get('time_seconds', 0))}] {it.get('text', '')}")
+    return "\n".join(lines) + "\n"
+
+
 def analyze_video(
     video: Video,
     transcript: Transcript | None = None,
@@ -397,17 +416,18 @@ def analyze_video(
         console.print(f"  [red]Empty transcript for {video.video_id}[/red]")
         return None
 
+    screen_block = _screen_block(video)
     try:
         if len(chunks) == 1:
             # Short video: a single full-video call, exactly as before.
-            prompts = [ANALYSIS_PROMPT_TEMPLATE.format(transcript_text=chunks[0])]
+            prompts = [ANALYSIS_PROMPT_TEMPLATE.format(transcript_text=chunks[0]) + screen_block]
             raw = call_llm(prompts[0])
         else:
             # Long video: map (one call per chunk) then reduce (one merge call).
             console.print(f"  [cyan]Long transcript: analyzing {len(chunks)} chunks (map-reduce)[/cyan]")
             map_prompts = build_chunk_prompts(chunks)
             partials = [call_llm(p) for p in map_prompts]
-            merge_prompt = build_merge_prompt(partials)
+            merge_prompt = build_merge_prompt(partials) + screen_block
             raw = call_llm(merge_prompt)
             prompts = map_prompts + [merge_prompt]
 

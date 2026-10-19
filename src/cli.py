@@ -87,6 +87,48 @@ def transcribe(source: str | None, model: str, force: bool, no_keep_audio: bool)
     )
 
 
+@cli.command("screen-text")
+@click.option("--limit", type=click.IntRange(min=1), default=None, help="Max videos to process")
+@click.option("--force", is_flag=True, help="Re-capture even if on-screen text already exists")
+@click.option("--frame-interval", type=float, default=None,
+              help="Seconds between extracted frames (default from VISUAL_FRAME_INTERVAL)")
+@click.option("--keep-media", is_flag=True, help="Keep the downloaded video after capture")
+def screen_text(limit: int | None, force: bool, frame_interval: float | None, keep_media: bool) -> None:
+    """Capture on-screen text (OCR) for discovered videos.
+
+    Downloads each video, extracts one frame every N seconds and OCRs the
+    text so the analysis can see code, numbers, slides, etc. that never
+    appear in the audio. Requires ffmpeg plus an OCR engine
+    (``easyocr`` or ``paddleocr``); see OCR_ENGINE in the README.
+    """
+    from youtube_knowledge_extractor.db import get_all_videos
+    from youtube_knowledge_extractor.visual import process_on_screen_text
+
+    if frame_interval is not None:
+        Config.VISUAL_FRAME_INTERVAL = float(frame_interval)
+
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    videos = [
+        v for v in videos
+        if v.status is not None and str(v.status) != "inaccessible" and v.url
+    ]
+    if limit is not None:
+        videos = videos[:limit]
+    if not videos:
+        console.print("[yellow]No videos to process. Run 'discover' first.[/yellow]")
+        return
+
+    console.print(
+        f"[cyan]Capturing on-screen text for {len(videos)} video(s) "
+        f"(engine: {Config.OCR_ENGINE})...[/cyan]"
+    )
+    result = process_on_screen_text(videos, force=force, keep_media=keep_media)
+    console.print(
+        f"[green]On-screen text done:[/green] {result.get('success', 0)} captured, "
+        f"{result.get('failed', 0)} failed."
+    )
+
+
 @cli.command()
 def cost() -> None:
     """Estimate cost for AI analysis."""

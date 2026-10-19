@@ -83,6 +83,7 @@ python src/cli.py dashboard
 | `transcripts` | Henter undertekster og gjenbruker lagrede resultater. Prøver `yt-dlp` dersom primærmetoden ikke lykkes. |
 | `transcripts --force` | Henter undertekster på nytt. |
 | `transcribe [KILDE]` | Lokal reserve når YouTube-undertekst-API-et er IP-blokkert: laster ned lyden med `yt-dlp` og transkriberer den lokalt med Whisper (GPU/CUDA). Valg: `--model` (`tiny`/`base`/`small`/`medium`/`large-v3`), `--force`, `--no-keep-audio`. Skriver `.txt` og `.srt` til `data/transcripts/`. |
+| `screen-text [--limit N]` | Fanger **visuell informasjon på skjermen**: laster ned videoen, tar ut ett bilde hvert N-te sekund (ffmpeg) og kjører OCR over teksten/koden. Lagrer resultater per video; `analyze` melder den inn som en ekstra kanal i prompten. Krever `ffmpeg` + OCR-motor (`OCR_ENGINE`: `easyocr` eller `paddleocr`). Valg: `--force`, `--frame-interval N`, `--keep-media`. |
 | `cost` | Viser et token- og prisestimat uten modellkall. |
 | `analyze --limit N` | Sender inntil N ventende transkripter til modellen. Lagrede analyser hoppes over. |
 | `analyze --limit N --force` | Analyserer også videoer som har en lagret analyse. Dette kan koste på nytt. |
@@ -112,6 +113,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - Modellen vurderer transkriptet uten uavhengig kildekontroll. Strukturelt gyldige svar kan fortsatt inneholde feil.
 - Undertekstene må finnes på YouTube. IP-blokkering kan stoppe begge innhentingsmetodene; da kan `transcribe` brukes til å transkribere lyden lokalt med Whisper (GPU/CUDA, eller CPU som reserve).
 - **YouTube, TikTok og Instagram**: oppdagelse og transkribering støtter alle tre. YouTube kan bruke undertekster (`transcripts`) eller Whisper (`transcribe`). TikTok/Instagram har ingen undertekst-API, så `transcripts` hoppes over automatisk for disse — bruk `transcribe` (Whisper) der. Kildelenker i notatene er plattform-tilpasset: YouTube har tidsstempel-dype-lenker, mens TikTok/Instagram lenker til den originale URL-en (uten hopp). Instagram kan kreve cookies (sett `YOUTUBE_COOKIES_FILE`).
+- **Tekst på skjermen (OCR)**: pipeline-en leser som standard **kun lyden**, så tekst/kode/tall som *vises* på skjermen går ellers tapt. `screen-text` dekker dette ved å laste ned videoen, uttrekke frames med ffmpeg og kjøre OCR. Den er **valgfri** (opt-in) og legger ingen omkostninger på den vanlige lyd-banen: tunge avhengigheter (OCR-motoren) importeres bare når funksjonen brukes, og videoen slettes etterpå med mindre `--keep-media` brukes. Fanges teksten, meldes den inn i analysen som en egen kanal («TEKST PÅ SKJERMEN») — bare for videoer som faktisk har fanget skjermt tekst. Kjør `screen-text` **før** `analyze` dersom du vil at OCR-teksten skal tas med.
 - Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
 
 ## Miljøvariabler
@@ -131,6 +133,9 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 | `SPENDING_LIMIT_USD` | `5.0` – grense for estimatet per analysejobb. |
 | `DRY_RUN_LIMIT` | `5` – antall analyser uten eksplisitt `--limit`. |
 | `RATE_LIMIT_SECONDS` | `1.0` – pause mellom analyseforsøk. |
+| `OCR_ENGINE` | `easyocr` – OCR-motor for `screen-text` (`easyocr` eller `paddleocr`). Må installeres separat (`pip install easyocr` eller `pip install paddleocr paddlepaddle`) + `ffmpeg` på PATH. |
+| `VISUAL_FRAME_INTERVAL` | `10` – antall sekunder mellom uttrekkede frames i `screen-text`. |
+| `VISUAL_MAX_FRAMES` | `200` – øvre grense for antall frames per video. |
 
 ## Lagring og personvern
 
@@ -154,6 +159,7 @@ src/youtube_knowledge_extractor/
   discovery.py                      Metadata og lenkelister
   transcripts.py                    Undertekster og lokal cache
   whisper_transcripts.py            Lokal Whisper-transkribering av lyd (GPU/CUDA)
+  visual.py                         On-screen text: frame-uttrekk (ffmpeg) + OCR (valgfri)
   analysis.py                       Prompt, modellkall, svarbehandling og innsiktsverifisering
   db.py                             SQLite-lagring og FTS5-fulltekst-søk
   orchestrator.py                    Arbeidsflyt og estimatgrense

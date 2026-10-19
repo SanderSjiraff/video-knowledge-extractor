@@ -507,3 +507,33 @@ def load_synthesis(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
     if row is None:
         return None
     return json.loads(row["synthesis_json"])
+
+
+def save_screen_text(video_id: str, items: list[dict], data_dir: Path = Path("data")) -> None:
+    """Store OCR'd on-screen text for a video (list of {time_seconds, text})."""
+    with get_connection(data_dir) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS screen_text ("
+            "video_id TEXT PRIMARY KEY, text_json TEXT NOT NULL, captured_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO screen_text (video_id, text_json, captured_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(video_id) DO UPDATE SET text_json = excluded.text_json, "
+            "captured_at = excluded.captured_at",
+            (video_id, json.dumps(items, ensure_ascii=False), datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+
+
+def get_screen_text(video_id: str, data_dir: Path = Path("data")) -> list[dict]:
+    """Load OCR'd on-screen text for a video, or an empty list if none."""
+    with get_connection(data_dir) as conn:
+        try:
+            row = conn.execute(
+                "SELECT text_json FROM screen_text WHERE video_id = ?", (video_id,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return []
+    if row is None:
+        return []
+    return json.loads(row["text_json"])

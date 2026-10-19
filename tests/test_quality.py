@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from youtube_knowledge_extractor import analysis, db, notes
+from youtube_knowledge_extractor import analysis, db, notes, visual
 from youtube_knowledge_extractor.models import (
     Insight,
     Transcript,
@@ -541,3 +541,89 @@ def test_ollama_response_strips_markdown_fences(monkeypatch):
     monkeypatch.setattr(analysis, "_last_llm_call", 0.0)
     monkeypatch.setattr(analysis.requests, "post", lambda *a, **kw: Response())
     assert analysis.call_llm("prompt") == {"summary_no": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# On-screen text (OCR) — feature: capture text shown on the video.
+# ---------------------------------------------------------------------------
+
+
+def test_screen_text_roundtrip(tmp_path):
+    db.init_db(tmp_path)
+    db.save_screen_text("abc123", [
+        {"time_seconds": 0.0, "text": "def foo(): pass"},
+        {"time_seconds": 10.0, "text": "pip install fastapi"},
+    ], data_dir=tmp_path)
+    items = db.get_screen_text("abc123", data_dir=tmp_path)
+    assert [i["text"] for i in items] == ["def foo(): pass", "pip install fastapi"]
+    assert [i["time_seconds"] for i in items] == [0.0, 10.0]
+    # Unknown video returns an empty list, not an error.
+    assert db.get_screen_text("missing", data_dir=tmp_path) == []
+
+
+def test_analyze_video_includes_screen_text_in_prompt(tmp_path, monkeypatch):
+    v, t = _setup_analysis_env(tmp_path, monkeypatch, text="some audio")
+    db.save_screen_text(v.video_id, [
+        {"time_seconds": 5.0, "text": "import transformers"},
+        {"time_seconds": 15.0, "text": "model = Model.from_pretrained('x')"},
+    ], data_dir=tmp_path)
+    captured: list[str] = []
+
+    def spy(prompt, model=None):
+        captured.append(prompt)
+        return _valid_payload()
+
+    monkeypatch.setattr(analysis, "call_llm", spy)
+    result = analysis.analyze_video(v, t)
+    assert result is not None
+    assert captured, "call_llm was not invoked"
+    prompt = captured[0]
+    assert "TEKST PÅ SKJERMEN" in prompt
+    assert "import transformers" in prompt
+    assert "model = Model.from_pretrained('x')" in prompt
+
+
+def test_analyze_video_without_screen_text_keeps_base_prompt(tmp_path, monkeypatch):
+    v, t = _setup_analysis_env(tmp_path, monkeypatch, text="some audio")
+    captured: list[str] = []
+
+    def spy(prompt, model=None):
+        captured.append(prompt)
+        return _valid_payload()
+
+    monkeypatch.setattr(analysis, "call_llm", spy)
+    assert analysis.analyze_video(v, t) is not None
+    # No on-screen text captured → base prompt is unchanged (no extra cost).
+    assert "TEKST PÅ SKJERMEN" not in captured[0]
+
+
+def test_capture_on_screen_text_dedupes_and_orders(tmp_path, monkeypatch):
+    monkeypatch.setattr(visual.Config, "VISUAL_FRAME_INTERVAL", 10)
+    monkeypatch.setattr(visual.Config, "VISUAL_MAX_FRAMES", 200)
+
+    v = video("abc123")
+    fake_video = tmp_path / "abc123.mp4"
+    monkeypatch.setattr(visual, "_download_video", lambda video, d: fake_video)
+
+    p0, p1, p2 = (tmp_path / f"frame_{i:04d}.png" for i in range(3))
+    monkeypatch.setattr(visual, "extract_frames",
+                        lambda vp, step, fd, max_frames=200: [(0.0, p0), (10.0, p1), (20.0, p2)])
+    texts = {str(p0): "Hello world", str(p1): "Hello world", str(p2): "def foo(): pass"}
+    monkeypatch.setattr(visual, "ocr_frame", lambda fp: texts[fp])
+
+    items = visual.capture_on_screen_text(v, keep_media=True)
+    # The repeated static text ("Hello world") is captured once.
+    assert [i["text"] for i in items] == ["Hello world", "def foo(): pass"]
+    assert [i["time_seconds"] for i in items] == [0.0, 20.0]
+
+
+def test_ocr_frame_unknown_engine_raises(monkeypatch):
+    monkeypatch.setattr(visual.Config, "OCR_ENGINE", "tesseract")
+    with pytest.raises(ValueError):
+        visual.ocr_frame("/nonexistent/frame.png")
+
+
+def test_extract_frames_raises_without_ffmpeg(tmp_path, monkeypatch):
+    monkeypatch.setattr(visual, "ffmpeg_available", lambda: False)
+    with pytest.raises(RuntimeError, match="ffmpeg"):
+        visual.extract_frames(tmp_path / "v.mp4", 10, tmp_path / "frames")

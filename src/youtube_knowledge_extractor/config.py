@@ -36,6 +36,12 @@ class Config:
     LLM_REASONING_EFFORT: str = os.getenv("LLM_REASONING_EFFORT", "").strip()
     LLM_MAX_OUTPUT_TOKENS: int = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "4096"))
 
+    # On-screen text capture (OCR of video frames). Opt-in via the
+    # 'screen-text' command; ffmpeg + an OCR engine must be installed.
+    VISUAL_FRAME_INTERVAL: float = float(os.getenv("VISUAL_FRAME_INTERVAL", "10"))
+    VISUAL_MAX_FRAMES: int = int(os.getenv("VISUAL_MAX_FRAMES", "200"))
+    OCR_ENGINE: str = os.getenv("OCR_ENGINE", "easyocr").strip().lower()
+
     @classmethod
     def validate(cls) -> None:
         for name, value in (("SPENDING_LIMIT_USD", cls.SPENDING_LIMIT_USD), ("RATE_LIMIT_SECONDS", cls.RATE_LIMIT_SECONDS)):
@@ -63,10 +69,11 @@ class Config:
     ANALYSES_DIR: Path = Path("data/analyses")
     EXPORTS_DIR: Path = Path("data/exports")
     AUDIO_DIR: Path = Path("data/audio")
+    VIDEO_DIR: Path = Path("data/video")
 
     @classmethod
     def ensure_dirs(cls) -> None:
-        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR, cls.AUDIO_DIR]:
+        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR, cls.AUDIO_DIR, cls.VIDEO_DIR]:
             d.mkdir(parents=True, exist_ok=True)
 
     @classmethod
