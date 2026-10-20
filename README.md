@@ -1,6 +1,6 @@
 # Video Knowledge Extractor
 
-Et Python-verktøy som henter videometadata og tilgjengelige undertekster fra **YouTube, TikTok og Instagram**, lager norske analyseutkast med en språkmodell og viser resultatene lokalt med Streamlit. Data lagres i SQLite og JSON på maskinen din.
+Et Python-verktøy som henter videometadata og tilgjengelige undertekster fra **YouTube, TikTok og Instagram**, lager norske analyseutkast med en språkmodell og viser resultatene lokalt med Streamlit. Data lagres i SQLite og JSON på maskinen din. I tillegg er det en **send-plattform**: du sender videoer fra nettleseren (lenker eller filer) eller fra telefonen via en Telegram-bot, og en jobb-kø + worker transkriberer og analyserer dem automatisk.
 
 ## Installasjon
 
@@ -62,7 +62,40 @@ Sett begge prisfeltene til leverandørens faktiske USD-priser per million input-
 
 `LLM_REASONING_EFFORT` sendes bare når feltet er satt. Qwen-modellen ovenfor aksepterer `low`, `medium` og `xhigh`; `high` gir feil. La feltet være tomt for modeller som ikke støtter parameteren. Endepunktet må også støtte JSON-svar og de øvrige forespørselsfeltene programmet bruker.
 
-## Bruk
+## Plattformen (send videoer fra web eller telefon)
+
+I tillegg til CLI-et finnes det en plattform: en web-UI der du sender videoer (lenker eller filer), en jobb-kø, en worker som kjører hele pipeline-en automatisk, et REST-API, og en Telegram-bot som fungerer som sendekanalt fra telefonen.
+
+```sh
+python src/cli.py platform
+```
+
+starter alt med én kommando: API-serveren, worker-en og dashboardet (Streamlit, mørkt tema, topp-tabs: **Send · Bibliotek · Søk · Syntese · Ranking · Eksport**). Du kan også kjøre delene hver for seg i egne terminaler:
+
+| Kommando | Virkning |
+|---|---|
+| `platform` | Starter API + worker + dashboard i én pakke (Ctrl+C stenger alt). |
+| `worker` | Bakgrunns-prosess som tar jobber ut av køen og kjører: oppdaging → transkribering → [OCR] → [visjon] → analyse → [embeddings]. |
+| `api` | REST-API på `http://127.0.0.1:8000` (se under). |
+| `bot` | Telegram-sendekanalen (long polling – krever ingen offentlig URL). |
+
+**Sende videoer:**
+- **Web-UI**: fanen «📥 Send» – lim inn lenker (YouTube/TikTok/Instagram) og/eller dra inn videofiler, velg hvilke pipeline-trinn som skal kjøre, trykk Send. Køen oppdateres live i vinduet.
+- **Telegram**: lag en bot med `@BotFather`, sett `TELEGRAM_BOT_TOKEN` og `TELEGRAM_ALLOWED_IDS` (finn ID-en din hos `@userinfobot`) i `.env`, kjør `python src/cli.py bot`. Del en TikTok/IG-video til Telegram → velg boten, eller lim inn en lenke, eller send en fil (opp til ~19 MB). Kommandoer i chatten: `/status`, `/search <term>`, `/cost`. **Tom allow-list = boten svarer på ingen** (sikker standard).
+- **API** (for fremtidige klienter, f.eks. en PWA): `POST /api/videos` med JSON `{"urls": [...], "options": {...}}` eller multipart (felt `urls` + filfelt `files`); `GET /api/jobs`, `GET /api/events` (live via Server-Sent Events), `GET /api/videos`, `GET /api/search?q=`, `GET /api/health`.
+
+Lokale filer (opplasting/bot) transkriberes direkte med Whisper uten nedlasting. Jobber som feiler får feilmeldingen lagret i køen og på videoen; OCR/visjon/embeddings-feil er ikke fatale og logges som merknad. API-et er et lokalt, enkeltbruker-verktøy i denne fasen (ingen auth ennå).
+
+**Se dashboardet fra telefonen (valgfritt):** dashboardet kjører lokalt på `http://localhost:8501`. For å åpne det i mobilens nettleser kan du bruke en gratis Cloudflare-tunnel:
+
+```powershell
+winget install cloudflare.cloudflared
+cloudflared tunnel --url http://localhost:8501
+```
+
+Tunnelen skriver ut en `https://….trycloudflare.com`-URL – åpne den i telefonen. Quick-tunnel-URLen byttes hver gang tunnelen starter; en gratis Cloudflare-konto gir fast URL (named tunnel). Botten trenger ingen tunnel – den bruker long polling utgående.
+
+## Bruk (CLI)
 
 Start med noen få videoer:
 
@@ -93,7 +126,7 @@ python src/cli.py dashboard
 | `synthesize [--force]` | Lag ÉN samlet syntese over alle analyserte videoer: felles tema, motsetninger og unik kunnskap. Én modellkall med kostnadsestimat; lastes fra cache uten `--force`. |
 | `export` | Eksporter alle analyserte videoer som Markdown-notater (med YAML-metadata og klikkbare kildelenker til video + tidsstempel), plus `INDEKS.md` (syntese + rangert videoliste) og `KUNNSKAP.md` (kompakt, deduplisert kunnskapskonsentrat optimert for inntasting som kontekst til en språkmodell). Ingen modellkall; skriver til `data/exports/markdown/`. |
 | `status` | Viser lagret behandlingsstatus. |
-| `dashboard` | Starter lokal visning av videoer, analyser, fulltekst-søk (Søk), samlet syntese (Syntese), rangering og eksport (JSON + Markdown). |
+| `dashboard` | Starter plattform-UI-et (Streamlit): Send (lenker/filer + live-kø), Bibliotek, Søk, Syntese, Ranking og Eksport. Samme UI som `platform`, men uten API og worker. |
 
 Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt heltall.
 
@@ -151,10 +184,14 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 | `EMBED_API_URL` | Tom som standard – kun for `EMBED_PROVIDER=api`; OpenAI-kompatibel `/embeddings`-URL (annakun `LLM_API_URL`). |
 | `EMBED_API_KEY` | Tom som standard – nøkkel for `EMBED_PROVIDER=api` (annakun `LLM_API_KEY`). |
 | `EMBED_CHUNK_CHARS` | `15000` – chunk-størrelse (i tegn) for embeddings. |
+| `API_HOST` | `127.0.0.1` – bind-adresse for plattform-API-et. |
+| `API_PORT` | `8000` – port for plattform-API-et. |
+| `TELEGRAM_BOT_TOKEN` | Tomt = boten er deaktivert. Token fra @BotFather. |
+| `TELEGRAM_ALLOWED_IDS` | Kommaseparerte numeriske Telegram-ID-er. Tom = boten nekter alle. |
 
 ## Lagring og personvern
 
-`data/knowledge_base.db` inneholder metadata, transkripter og analyser. Råtranskripter ligger også under `data/transcripts/`, og JSON-eksport fra grensesnittet ligger under `data/exports/`. Disse filene og `.env` ignoreres av Git. `.env.example` er en offentlig mal uten hemmeligheter.
+`data/knowledge_base.db` inneholder metadata, transkripter, analyser og plattformens jobb-kø (`jobs`-tabellen). Råtranskripter ligger også under `data/transcripts/`, JSON-eksport fra grensesnittet under `data/exports/`, og opplastede videofiler (fra web-UI eller Telegram) under `data/uploads/`. Disse filene og `.env` ignoreres av Git. `.env.example` er en offentlig mal uten hemmeligheter.
 
 I API-modus sendes transkriptutdrag til leverandøren. I Ollama-modus sendes de til `OLLAMA_URL`; kontroller adressen dersom analysen skal forbli på egen maskin. YouTube-innhenting krever fortsatt nettverk. Bruk innhold du har rett til å hente og behandle.
 
@@ -171,6 +208,11 @@ Testene bruker midlertidige data og erstatter eksterne nettverks- og modellkall.
 src/cli.py                          Kommandolinje
 src/video_knowledge_extractor/
   config.py                         Miljøoppsett
+  jobs.py                           Jobb-kø (SQLite) for plattformen
+  worker.py                         Jobb-worker: kjører pipeline-en per jobb
+  api.py                            Plattform-API (FastAPI): sending, status, SSE, søk
+  telegram_bot.py                   Telegram-sendekanal (long polling, allow-list)
+  dashboard.py                      Streamlit-plattformen (Send, Bibliotek, Søk, Syntese, Ranking, Eksport)
   discovery.py                      Metadata og lenkelister
   transcripts.py                    Undertekster og lokal cache
   whisper_transcripts.py            Lokal Whisper-transkribering av lyd (GPU/CUDA)
@@ -180,7 +222,6 @@ src/video_knowledge_extractor/
   analysis.py                       Prompt, modellkall, svarbehandling og innsiktsverifisering
   db.py                             SQLite-lagring og FTS5-fulltekst-søk
   orchestrator.py                    Arbeidsflyt og estimatgrense
-  dashboard.py                       Streamlit-visning, fulltekst-søk og eksport
   cross_video.py                    Hjelpefunksjoner for temaer, rangering og samlet syntese
   notes.py                          Markdown-eksport med kildelenker (Obsidian/OpenCode)
   models.py                         Datamodeller

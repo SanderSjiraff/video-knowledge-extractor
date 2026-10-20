@@ -82,6 +82,14 @@ class Config:
 
     COOKIES_FILE: str | None = os.getenv("YOUTUBE_COOKIES_FILE")
 
+    # Platform: API server and Telegram send-channel.
+    API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
+    API_PORT: int = int(os.getenv("API_PORT", "8000"))
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    # Comma-separated numeric Telegram user ids allowed to use the bot.
+    # Empty = the bot refuses everyone (safe default).
+    TELEGRAM_ALLOWED_IDS: str = os.getenv("TELEGRAM_ALLOWED_IDS", "").strip()
+
     # Paths
     DATA_DIR: Path = Path("data")
     CACHE_DIR: Path = Path("data/cache")

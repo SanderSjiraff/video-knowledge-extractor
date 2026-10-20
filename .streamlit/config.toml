@@ -1,0 +1,14 @@
+# VKE platform theme (dark + violet, approved design).
+[theme]
+base = "dark"
+primaryColor = "#8b5cf6"
+backgroundColor = "#0d0f17"
+secondaryBackgroundColor = "#1a1e2e"
+textColor = "#e8eaf2"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

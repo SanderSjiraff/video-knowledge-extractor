@@ -285,6 +285,69 @@ def dashboard() -> None:
 
 
 @cli.command()
+def worker() -> None:
+    """Run the background job worker (processes the send queue).
+
+    Keep this running (in its own terminal or via 'platform') whenever you
+    want submitted videos to be processed.
+    """
+    from video_knowledge_extractor.worker import worker_loop
+
+    worker_loop()
+
+
+@cli.command()
+def api() -> None:
+    """Run the platform API server (FastAPI, http://127.0.0.1:8000)."""
+    import uvicorn
+
+    from video_knowledge_extractor.api import create_app
+
+    console.print(f"[bold blue]API server on http://{Config.API_HOST}:{Config.API_PORT}[/bold blue]")
+    uvicorn.run(create_app(), host=Config.API_HOST, port=Config.API_PORT, log_level="warning")
+
+
+@cli.command()
+def platform() -> None:
+    """Launch the full platform: API server + worker + dashboard (one command)."""
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    console.print("[bold blue]Starting VKE platform (API + worker + dashboard)...[/bold blue]")
+    console.print("[yellow]Ctrl+C stops everything.[/yellow]")
+    children = [
+        subprocess.Popen([sys.executable, "src/cli.py", "api"], cwd=root),
+        subprocess.Popen([sys.executable, "src/cli.py", "worker"], cwd=root),
+    ]
+    try:
+        dashboard_path = root / "src" / "video_knowledge_extractor" / "dashboard.py"
+        subprocess.run(
+            [sys.executable, "-m", "streamlit", "run", str(dashboard_path)],
+            cwd=root,
+            check=False,
+        )
+    finally:
+        for proc in children:
+            proc.terminate()
+        for proc in children:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+@cli.command()
+def bot() -> None:
+    """Run the Telegram send-channel bot (long polling, no public URL needed).
+
+    Requires TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_IDS in .env.
+    """
+    from video_knowledge_extractor.telegram_bot import run_bot
+
+    run_bot()
+
+
+@cli.command()
 def status() -> None:
     """Show current processing status."""
     print_status()

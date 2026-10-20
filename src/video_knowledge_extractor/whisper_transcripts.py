@@ -87,7 +87,15 @@ def _get_model(model_size: str, device: str, compute_type: str):
 
 
 def _download_audio(video: Video, audio_dir: Path) -> Path:
-    """Download best-audio for a video with yt-dlp. Returns the local path."""
+    """Download best-audio for a video with yt-dlp. Returns the local path.
+
+    For local files (platform 'local', e.g. uploads sent from the platform
+    UI or the Telegram bot) there is nothing to download: faster-whisper
+    (PyAV) can decode the file directly, so it is passed through as-is.
+    """
+    local = Path(video.url)
+    if local.exists():
+        return local
     audio_dir.mkdir(parents=True, exist_ok=True)
     preferred = audio_dir / f"{video.video_id}.m4a"
     if preferred.exists() and preferred.stat().st_size > 0:
