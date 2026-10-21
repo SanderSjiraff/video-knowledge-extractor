@@ -1,21 +1,15 @@
-"""Platform dashboard (Streamlit).
-
-Top-tabbed UI with the approved dark/violet design:
-    📥 Send      - submit URLs / files, pick pipeline stages, live queue
-    📚 Bibliotek - video cards, filters, detail view
-    🔎 Søk       - keyword (FTS5) + semantic search
-    🧩 Syntese   - combined collection synthesis
-    🏆 Ranking   - value ranking of analyzed videos
-    📤 Eksport   - JSON / Markdown export
-
-Submissions go straight into the SQLite job queue (see jobs.py); a worker
-process (`python src/cli.py worker`, or part of `platform`) picks them up.
+"""
+VKE – Video Knowledge Extractor
+Streamlit frontend
 """
 
 from __future__ import annotations
 
 import json
+import math
 import sys
+import urllib.parse
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -25,230 +19,615 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from video_knowledge_extractor.config import Config
 from video_knowledge_extractor.db import (
     get_all_videos,
-    get_progress_stats,
-    get_screen_text,
-    get_transcript,
-    get_frame_descriptions,
     get_connection,
+    get_progress_stats,
+    get_transcript,
     init_db,
-    search_transcripts,
     load_synthesis,
+    search_transcripts,
 )
+from video_knowledge_extractor.discovery import detect_platform
+from video_knowledge_extractor.jobs import enqueue_job, list_jobs
 from video_knowledge_extractor.models import VideoStatus
 from video_knowledge_extractor.notes import export_markdown
 from video_knowledge_extractor.orchestrator import run_synthesis
-from video_knowledge_extractor.discovery import detect_platform
-from video_knowledge_extractor.jobs import enqueue_job, list_jobs
 
-st.set_page_config(page_title="VKE – Video Knowledge Extractor", page_icon="🧠", layout="wide")
+st.set_page_config(
+    page_title="VKE – Video Knowledge Extractor",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 Config.ensure_dirs()
 init_db(data_dir=Config.DATA_DIR)
 
-# ---------------------------------------------------------------------------
-# Styling (dark theme comes from .streamlit/config.toml; these are the custom
-# components: badges, stage pills, chips, cards).
-# ---------------------------------------------------------------------------
-STYLES = """
-<style>
-.vke-header { display:flex; align-items:center; justify-content:space-between; padding: 4px 2px 14px; }
-.vke-logo { font-size: 19px; font-weight: 800; letter-spacing: .3px; display:flex; gap:10px; align-items:center; }
-.vke-logo-badge { background: linear-gradient(135deg,#8b5cf6,#c084fc); border-radius:10px;
-  width:34px; height:34px; display:inline-flex; align-items:center; justify-content:center; font-size:17px; }
-.vke-status { display:inline-flex; align-items:center; gap:8px; background:#1a1e2e;
-  border:1px solid #262b3d; border-radius:999px; padding:6px 14px; font-size:12.5px; color:#8b93a7; }
-.vke-dot { width:8px; height:8px; border-radius:50%; background:#34d399; display:inline-block; }
+# ─────────────────────────────────────────────────────────────────
+# SESSION STATE
+# ─────────────────────────────────────────────────────────────────
 
-.plat { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:999px; letter-spacing:.5px; }
-.plat-yt { background:rgba(255,0,51,.15); color:#ff5c7a; border:1px solid rgba(255,0,51,.4); }
-.plat-tt { background:rgba(37,244,238,.12); color:#25f4ee; border:1px solid rgba(37,244,238,.35); }
-.plat-ig { background:linear-gradient(45deg,rgba(98,40,215,.25),rgba(238,42,123,.25)); color:#f472b6;
-  border:1px solid rgba(238,42,123,.45); }
-.plat-local { background:rgba(139,92,246,.14); color:#a78bfa; border:1px solid rgba(139,92,246,.4); }
 
-.vke-job { background:#1a1e2e; border:1px solid #262b3d; border-radius:13px; padding:12px 16px; margin-bottom:10px; }
-.vke-job-title { font-weight:600; font-size:14.5px; margin-bottom:9px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.vke-stages { display:flex; gap:8px; flex-wrap:wrap; }
-.stage { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:5px 12px;
-  border-radius:999px; background:#1f2437; color:#8b93a7; border:1px solid #262b3d; }
-.stage .sdot { width:7px; height:7px; border-radius:50%; background:#3a415a; display:inline-block; }
-.stage.done { color:#a7f3d0; background:rgba(52,211,153,.08); border-color:rgba(52,211,153,.3); }
-.stage.done .sdot { background:#34d399; }
-.stage.run { color:#c4b5fd; background:rgba(139,92,246,.14); border-color:rgba(139,92,246,.45); font-weight:600; }
-.stage.run .sdot { background:#a78bfa; box-shadow:0 0 8px #a78bfa; }
-.stage.skip { opacity:.4; }
-.vke-job-note { color:#fbbf24; font-size:12.5px; margin-top:8px; }
-.vke-job-err { color:#f87171; font-size:12.5px; margin-top:8px; }
+def _ensure(key, default):
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-.rec { font-size:11px; font-weight:800; padding:3px 11px; border-radius:999px; letter-spacing:.7px; }
-.rec-watch { background:rgba(52,211,153,.14); color:#34d399; border:1px solid rgba(52,211,153,.4); }
-.rec-skim { background:rgba(251,191,36,.12); color:#fbbf24; border:1px solid rgba(251,191,36,.4); }
-.rec-skip { background:rgba(248,113,113,.12); color:#f87171; border:1px solid rgba(248,113,113,.4); }
 
-.vke-card { background:#1a1e2e; border:1px solid #262b3d; border-radius:14px; overflow:hidden; margin-bottom:4px; }
-.vke-thumb { height:108px; position:relative; display:flex; align-items:center; justify-content:center; }
-.thumb-yt { background:linear-gradient(135deg,#312e81,#7c3aed); }
-.thumb-tt { background:linear-gradient(135deg,#134e4a,#0ea5e9); }
-.thumb-ig { background:linear-gradient(135deg,#7c2d12,#f59e0b); }
-.thumb-local { background:linear-gradient(135deg,#14532d,#22c55e); }
-.vke-play { width:40px; height:40px; border-radius:50%; background:rgba(13,15,23,.55);
-  border:1.5px solid rgba(255,255,255,.35); display:flex; align-items:center; justify-content:center;
-  font-size:13px; color:white; padding-left:3px; }
-.vke-dur { position:absolute; bottom:9px; right:10px; font-size:11px; font-weight:600;
-  background:rgba(13,15,23,.7); padding:3px 8px; border-radius:7px; }
-.vke-card .vke-plat { position:absolute; top:9px; left:10px; }
-.vke-card-body { padding:12px 14px 13px; }
-.vke-card-title { font-size:14px; font-weight:600; line-height:1.35; margin-bottom:3px; min-height:2.7em;
-  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.vke-card-chan { font-size:12px; color:#8b93a7; margin-bottom:9px; }
-.vke-scores { display:flex; gap:14px; font-size:11px; color:#8b93a7; margin-bottom:9px; }
-.dots i { width:6px; height:6px; border-radius:50%; background:#2c3350; display:inline-block; margin-right:3px; }
-.dots i.on { background:#a78bfa; }
-.vke-card-foot { display:flex; align-items:center; gap:10px; font-size:11.5px; color:#8b93a7; }
-.vke-empty { color:#8b93a7; font-size:13px; }
-</style>
+_ensure("page", "oversikt")
+_ensure("lib_page", 1)
+_ensure("lib_tab", "alle")
+
+PAGES = [
+    ("oversikt", "Oversikt"),
+    ("bibliotek", "Bibliotek"),
+    ("ko", "Kø"),
+    ("sok", "Søk"),
+    ("syntese", "Syntese"),
+    ("ranking", "Ranking"),
+    ("eksport", "Eksport"),
+]
+
+STAGE_LABELS = {
+    "queued": "I kø",
+    "discovering": "Henter video",
+    "transcribing": "Transkriberer",
+    "ocr": "OCR",
+    "vision": "Visjoner",
+    "analyzing": "Analyserer",
+    "embedding": "Indekserer",
+    "done": "Ferdig",
+    "failed": "Feilet",
+}
+
+# ─────────────────────────────────────────────────────────────────
+# ICONS (inline SVG)
+# ─────────────────────────────────────────────────────────────────
+
+NAV_ICONS = {
+    "oversikt": '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    "bibliotek": '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+    "ko": '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+    "sok": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "syntese": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    "ranking": '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    "eksport": '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+    "hjaelp": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+}
+
+
+def _mask_svg(inner):
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' "
+        "stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+        f"{inner}</svg>"
+    )
+    return urllib.parse.quote(svg, safe="")
+
+
+def _mask_rule(key):
+    e = _mask_svg(NAV_ICONS[key])
+    return f"""
+[data-testid="stSidebar"] .st-key-nav_{key} button::before {{
+    content: "";
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    margin-right: 10px;
+    flex-shrink: 0;
+    background-color: currentColor;
+    -webkit-mask: url("data:image/svg+xml,{e}") center / contain no-repeat;
+    mask: url("data:image/svg+xml,{e}") center / contain no-repeat;
+}}
+[data-testid="stSidebar"] .st-key-nav_{key} button[kind="primary"]::before {{
+    background-color: #388bfd;
+}}
 """
-st.markdown(STYLES, unsafe_allow_html=True)
-
-# ---------------------------------------------------------------------------
-# Small HTML builders
-# ---------------------------------------------------------------------------
-_PLAT_LABEL = {"youtube": ("YOUTUBE", "plat-yt"), "tiktok": ("TIKTOK", "plat-tt"),
-               "instagram": ("INSTAGRAM", "plat-ig"), "local": ("FIL", "plat-local")}
 
 
-def _plat_badge(platform: str) -> str:
-    label, cls = _PLAT_LABEL.get(platform, ("VIDEO", "plat-local"))
-    return f'<span class="plat {cls}">{label}</span>'
+NAV_ICONS_CSS = "".join(_mask_rule(k) for k, _ in PAGES) + _mask_rule("hjaelp")
+
+_SEARCH_ICON_MASK = _mask_svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>')
+_UPLOAD_ICON_MASK = _mask_svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>')
 
 
-def _score_dots(n: int) -> str:
-    dots = "".join(f'<i class="{"on" if i < n else ""}"></i>' for i in range(5))
-    return f'<span class="dots">{dots}</span>'
-
-
-def _rec_chip(rec: str) -> str:
-    mapping = {"watch": ("SE", "rec-watch"), "skim": ("SKIM", "rec-skim"), "skip": ("SLEP", "rec-skip")}
-    label, cls = mapping.get(rec or "", ("?", ""))
-    return f'<span class="rec {cls}">{label}</span>'
-
-
-def _job_stages_html(job: dict) -> str:
-    """Render the 4 stage pills for a job, based on its current status."""
-    opts = job.get("options") or {}
-    status = job.get("status", "queued")
-    has_transcribe = opts.get("transcribe", True)
-    has_embed = opts.get("embed", True)
-    is_slides = job.get("kind") == "slides"
-
-    stage_order = ["Oppdaget", "Bilder" if is_slides else "Transkribert", "Analysert", "Indeksert"]
-    # Map status to how many stages are done, and what (if anything) is running.
-    stage_index = {
-        "queued": (-1, None),
-        "discovering": (-1, 0),
-        "transcribing": (0, 1),
-        "ocr": (1, "ocr"),
-        "vision": (1, "vision"),
-        "analyzing": (1 if not has_transcribe else 2, 2),
-        "embedding": (2 if not has_embed else 3 if not has_transcribe else 3, 3),
-        "done": (99, None),
-        "failed": (-1, None),
-    }
-    done_before, running = stage_index.get(status, (-1, None))
-
-    labels_run = {
-        0: "Oppdager…",
-        1: (
-            f"Behandler bilder… {job.get('progress', 0)}%"
-            if is_slides
-            else f"Transkriberer… {job.get('progress', 0)}%"
-        ),
-        "ocr": "OCR på skjerm…",
-        "vision": "Beskriver bilder…",
-        2: "Analyserer…",
-        3: "Indekserer…",
-    }
-
-    pills = []
-    for i, label in enumerate(stage_order):
-        if i in (1,) and not has_transcribe:
-            pills.append(f'<span class="stage skip"><span class="sdot"></span>{label}</span>')
-            continue
-        if i == 3 and not has_embed:
-            pills.append(f'<span class="stage skip"><span class="sdot"></span>{label}</span>')
-            continue
-        if status == "failed" and running is None and i == 0:
-            pills.append(f'<span class="stage run"><span class="sdot"></span>Feilet</span>')
-            break
-        if status == "failed" and i > 0:
-            pills.append(f'<span class="stage skip"><span class="sdot"></span>{label}</span>')
-            continue
-        if status == "done":
-            pills.append(f'<span class="stage done"><span class="sdot"></span>{label}</span>')
-        elif i <= done_before:
-            pills.append(f'<span class="stage done"><span class="sdot"></span>{label}</span>')
-        elif running == i:
-            pills.append(f'<span class="stage run"><span class="sdot"></span>{labels_run[i]}</span>')
-        else:
-            pills.append(f'<span class="stage"><span class="sdot"></span>{label}</span>')
-    if running in ("ocr", "vision"):
-        # Insert the special sub-stage pill after the transcribed pill.
-        label = "OCR på skjerm…" if running == "ocr" else "Beskriver bilder…"
-        pill = f'<span class="stage run"><span class="sdot"></span>{label}</span>'
-        insert_at = 2 if has_transcribe else 1
-        pills.insert(insert_at, pill)
-    return f'<div class="vke-stages">{"".join(pills)}</div>'
-
-
-def _job_card_html(job: dict) -> str:
-    title = job.get("title") or job.get("url") or "Video"
-    if len(title) > 90:
-        title = title[:87] + "…"
-    extra = ""
-    if job.get("status") == "done" and job.get("note"):
-        extra = f'<div class="vke-job-note">ℹ {job["note"]}</div>'
-    if job.get("status") == "failed":
-        extra = f'<div class="vke-job-err">✖ {job.get("error_message") or "Ukjent feil"}</div>'
+def _plat_icon(p):
+    if p == "youtube":
+        return (
+            '<svg width="16" height="16" viewBox="0 0 16 16" style="border-radius:4px;margin-right:7px;flex-shrink:0;">'
+            '<rect width="16" height="16" rx="4" fill="#ff0000"/>'
+            '<path d="M6.3 4.6 11.4 8l-5.1 3.4z" fill="#fff"/></svg>'
+        )
+    if p == "tiktok":
+        return (
+            '<svg width="16" height="16" viewBox="0 0 16 16" style="border-radius:4px;margin-right:7px;flex-shrink:0;">'
+            '<rect width="16" height="16" rx="4" fill="#010101"/>'
+            '<circle cx="6.9" cy="10.7" r="2" fill="#fff"/>'
+            '<path d="M8.7 10.7V3.4l3.5 1.1v1.8l-1.9-.6" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        )
+    if p == "instagram":
+        return (
+            '<svg width="16" height="16" viewBox="0 0 16 16" style="border-radius:4px;margin-right:7px;flex-shrink:0;">'
+            '<defs><linearGradient id="ig" x1="0" y1="1" x2="1" y2="0">'
+            '<stop offset="0" stop-color="#f9ce34"/><stop offset=".5" stop-color="#ee2a7b"/><stop offset="1" stop-color="#6228d7"/>'
+            "</linearGradient></defs>"
+            '<rect width="16" height="16" rx="4" fill="url(#ig)"/>'
+            '<rect x="3.6" y="3.6" width="8.8" height="8.8" rx="2.6" fill="none" stroke="#fff" stroke-width="1.3"/>'
+            '<circle cx="8" cy="8" r="2" fill="none" stroke="#fff" stroke-width="1.3"/>'
+            '<circle cx="11.1" cy="4.9" r=".9" fill="#fff"/></svg>'
+        )
     return (
-        f'<div class="vke-job">'
-        f'<div class="vke-job-title">{_plat_badge(job.get("platform", "local"))} {title}</div>'
-        f'{_job_stages_html(job)}'
-        f'{extra}'
-        f'</div>'
+        '<svg width="16" height="16" viewBox="0 0 16 16" style="border-radius:4px;margin-right:7px;flex-shrink:0;">'
+        '<rect width="16" height="16" rx="4" fill="#30363d"/>'
+        '<path d="M8 3.8 11.8 8 8 12.2 4.2 8z" fill="#8b949e"/></svg>'
     )
 
 
-# ---------------------------------------------------------------------------
-# Data helpers (from the old overview, shared by library + detail)
-# ---------------------------------------------------------------------------
-def _load_analysis(video_id: str):
-    with get_connection(Config.DATA_DIR) as conn:
-        row = conn.execute("SELECT * FROM analyses WHERE video_id = ?", (video_id,)).fetchone()
-    if row is None:
-        return None
-    return {
-        "video_id": row["video_id"],
-        "summary_no": row["summary_no"],
-        "insights": json.loads(row["insights_json"]),
-        "techniques_tools": json.loads(row["techniques_tools_json"]),
-        "actionable_steps": json.loads(row["actionable_steps_json"]),
-        "relevance_score": row["relevance_score"],
-        "depth_score": row["depth_score"],
-        "practical_score": row["practical_score"],
-        "redundancy_score": row["redundancy_score"],
-        "recommendation": row["recommendation"],
-        "recommendation_justification": row["recommendation_justification"],
-        "key_sections": json.loads(row["key_sections_json"]),
-        "estimated_key_watch_minutes": row["estimated_key_watch_minutes"],
-        "low_confidence": bool(row["low_confidence"]),
-        "confidence_reason": row["confidence_reason"],
-    }
+# ─────────────────────────────────────────────────────────────────
+# CSS
+# ─────────────────────────────────────────────────────────────────
+st.markdown(
+    f"""
+<style>
+/* === FOUNDATION === */
+html, body, .stApp {{
+    background-color: #0d1117 !important;
+    color: #c9d1d9 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}}
+#MainMenu, footer {{ visibility: hidden; }}
+.block-container {{
+    padding-top: 1.2rem !important;
+    padding-bottom: 3rem !important;
+    max-width: 1400px !important;
+}}
+[data-testid="stVerticalBlock"] {{ gap: 10px !important; }}
+[data-testid="stHorizontalBlock"] {{ gap: 10px !important; }}
+
+/* === SIDEBAR === */
+[data-testid="stSidebar"] {{
+    background: #10151c !important;
+    border-right: 1px solid #1f2733 !important;
+    width: 272px !important;
+    min-width: 272px !important;
+    max-width: 272px !important;
+}}
+[data-testid="stSidebar"] .block-container {{ padding: 22px 14px 16px 14px !important; }}
+[data-testid="stSidebar"] .stButton {{ width: 100% !important; margin-bottom: 4px !important; }}
+[data-testid="stSidebar"] .stButton > button {{
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    height: 42px !important;
+    padding-left: 13px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    background: transparent !important;
+    color: #8b949e !important;
+}}
+[data-testid="stSidebar"] .stButton > button:hover {{
+    background: rgba(139,148,158,.08) !important;
+    color: #c9d1d9 !important;
+}}
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {{
+    background: rgba(56,139,253,.12) !important;
+    color: #f0f6fc !important;
+    border-left: 3px solid #388bfd !important;
+    border-radius: 0 8px 8px 0 !important;
+    font-weight: 600 !important;
+}}
+[data-testid="stSidebar"] .stButton > button .stMarkdownContainer,
+[data-testid="stSidebar"] .stButton > button .stMarkdownContainer p {{ margin: 0 !important; line-height: 1.25 !important; }}
+{NAV_ICONS_CSS}
+
+/* === PANEL BOXES (st.container(border=True) i Streamlit 1.66) === */
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"] {{
+    background: #131a22 !important;
+    border: 1px solid #26303b !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
+}}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) {{
+    padding: 14px 16px 10px 16px !important;
+}}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) {{
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+}}
+
+/* === TYPOGRAPHY === */
+h1 {{
+    color: #f0f6fc !important;
+    font-size: 38px !important;
+    font-weight: 800 !important;
+    letter-spacing: -1px !important;
+    margin: 4px 0 2px 0 !important;
+    line-height: 1.1 !important;
+}}
+.lead {{ color: #8b949e; font-size: 15px; margin: 0 0 16px 0; }}
+.sub-lead {{ color: #6e7681; font-size: 13px; margin: 0 0 14px 0; }}
+.sec-title {{ font-size: 18px; font-weight: 700; color: #f0f6fc; }}
+.secrow {{ display: flex; align-items: center; gap: 12px; padding-top: 6px; }}
+.count-pill {{
+    background: #21262d; color: #c9d1d9; font-size: 12px; font-weight: 600;
+    padding: 3px 10px; border-radius: 12px;
+}}
+.panel-title {{ font-size: 17px; font-weight: 700; color: #f0f6fc; margin-bottom: 2px; }}
+.panel-desc {{ font-size: 13px; color: #8b949e; margin-bottom: 14px; }}
 
 
-def _all_analyses():
+/* === STATS BAR === */
+.stats-bar {{
+    display: flex; align-items: center; gap: 24px;
+    background: #131a22; border: 1px solid #26303b; border-radius: 10px;
+    padding: 13px 20px;
+}}
+.stats-bar .stat {{ font-size: 14px; color: #8b949e; }}
+.stats-bar .stat b {{ color: #f0f6fc; font-weight: 700; }}
+.stats-bar .sep {{ width: 1px; height: 20px; background: #30363d; }}
+
+/* === BUTTONS === */
+.stButton > button[kind="primary"] {{
+    background: #1f6feb !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    height: 40px !important;
+}}
+.stButton > button[kind="primary"]:hover {{ background: #388bfd !important; }}
+.stButton > button[kind="secondary"] {{
+    background: #21262d !important;
+    color: #c9d1d9 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    height: 40px !important;
+}}
+.stButton > button[kind="secondary"]:hover {{ background: #30363d !important; }}
+.stButton > button[kind="tertiary"] {{
+    color: #388bfd !important;
+    background: transparent !important;
+    border: none !important;
+    font-weight: 500 !important;
+    padding: 0 6px !important;
+    font-size: 13px !important;
+}}
+
+/* === TABS (borderless wrapper) === */
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) .stButton {{ width: 100% !important; margin: 0 !important; }}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) .stButton > button {{
+    height: 40px !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #8b949e !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    padding: 0 4px !important;
+}}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) .stButton > button:hover {{
+    background: transparent !important;
+    color: #c9d1d9 !important;
+}}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) .stButton > button[kind="primary"] {{
+    color: #f0f6fc !important;
+    background: transparent !important;
+    border-bottom: 2px solid #388bfd !important;
+    font-weight: 600 !important;
+}}
+
+/* === INPUTS === */
+[data-baseweb="input"] {{
+    position: relative;
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    height: 40px !important;
+}}
+[data-baseweb="input"]::before {{
+    content: "";
+    position: absolute;
+    left: 13px; top: 50%; transform: translateY(-50%);
+    width: 15px; height: 15px;
+    background: #6e7681;
+    z-index: 1;
+    -webkit-mask: url("data:image/svg+xml,{_SEARCH_ICON_MASK}") center / contain no-repeat;
+    mask: url("data:image/svg+xml,{_SEARCH_ICON_MASK}") center / contain no-repeat;
+}}
+[data-baseweb="input"] input {{
+    padding-left: 38px !important;
+    color: #c9d1d9 !important;
+    font-size: 14px !important;
+}}
+[data-baseweb="input"] input::placeholder {{ color: #565e67; }}
+[data-baseweb="textarea"] {{
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+}}
+[data-baseweb="textarea"] textarea {{ font-size: 14px; }}
+[data-baseweb="select"] > div {{
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    height: 40px !important;
+    color: #c9d1d9 !important;
+    font-size: 14px !important;
+}}
+
+/* === FILE UPLOADER (button-like, aligned with Analyser button) === */
+[data-testid="stFileUploader"] > section {{
+    position: relative;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    box-sizing: border-box !important;
+    padding: 0 12px !important;
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+    cursor: pointer;
+}}
+[data-testid="stFileUploader"] > section::before {{
+    content: "Last opp filer";
+    font-size: 14px; color: #c9d1d9; font-weight: 500;
+}}
+[data-testid="stFileUploader"] > section::after {{
+    content: "";
+    width: 15px; height: 15px;
+    margin-left: 8px;
+    flex-shrink: 0;
+    background: #8b949e;
+    -webkit-mask: url("data:image/svg+xml,{_UPLOAD_ICON_MASK}") center / contain no-repeat;
+    mask: url("data:image/svg+xml,{_UPLOAD_ICON_MASK}") center / contain no-repeat;
+}}
+[data-testid="stFileUploader"] > section > * {{
+    position: absolute !important;
+    inset: 0 !important;
+    opacity: 0 !important;
+    cursor: pointer;
+}}
+[data-testid="stFileUploaderDropzoneInstructions"] {{ display: none !important; }}
+
+/* === EXPANDER === */
+[data-testid="stExpander"] {{
+    background: #0d1117 !important;
+    border: 1px solid #30363d !important;
+    border-radius: 8px !important;
+}}
+[data-testid="stExpander"] summary {{ font-size: 13px; color: #c9d1d9 !important; }}
+
+/* === TABLE === */
+.tbl-header {{
+    display: flex; align-items: center;
+    font-size: 13px; color: #8b949e; font-weight: 500;
+    padding: 4px 0;
+    min-height: 60px;
+}}
+.cell {{
+    display: flex; align-items: center;
+    padding: 4px 0;
+    min-height: 60px;
+}}
+.tbline {{ border-bottom: 1px solid #1d2530; }}
+
+/* Table rows: uniform height + one full-width line per row (no gaps) */
+.tblbox {{ display: none; }}
+[data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) {{ gap: 0 !important; }}
+[data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {{
+    border-bottom: 1px solid #1d2530;
+}}
+[data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) > [data-testid="stLayoutWrapper"]:last-of-type > [data-testid="stHorizontalBlock"] {{
+    border-bottom: none;
+}}
+.vthumb {{
+    width: 46px; height: 32px; border-radius: 6px; object-fit: cover;
+    margin-right: 12px; background: #21262d; flex-shrink: 0;
+}}
+.vthumb-ph {{
+    width: 46px; height: 32px; border-radius: 6px; margin-right: 12px;
+    background: #21262d; display: flex; align-items: center; justify-content: center;
+    color: #565e67; font-size: 9px; flex-shrink: 0;
+}}
+.vtext {{ min-width: 0; }}
+.vtitle {{
+    font-size: 14px; color: #e6edf3; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
+.cbx {{
+    width: 16px; height: 16px;
+    border: 1.5px solid #3d444d; border-radius: 4px;
+    display: inline-block; flex-shrink: 0;
+}}
+.vchan {{ font-size: 12px; color: #8b949e; margin-top: 1px; }}
+.plat {{ display: flex; align-items: center; font-size: 13px; color: #c9d1d9; }}
+.dots {{ color: #484f58; font-size: 15px; letter-spacing: 2px; }}
+.pageinfo {{ color: #8b949e; font-size: 13px; padding-top: 8px; }}
+[data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) .stButton > button {{
+    height: 34px !important;
+    padding: 0 10px !important;
+    font-size: 13px !important;
+}}
+
+/* === BADGES === */
+.badge-status {{
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500;
+    padding: 3px 10px; border-radius: 20px;
+}}
+.status-done {{ color: #3fb950; background: rgba(35,197,94,.13); }}
+.status-run  {{ color: #58a6ff; background: rgba(56,139,253,.12); }}
+.status-wait {{ color: #8b949e; background: rgba(139,148,158,.12); }}
+.status-err  {{ color: #f85149; background: rgba(242,72,65,.12); }}
+.status-dot {{ width: 7px; height: 7px; border-radius: 50%; display: inline-block; }}
+.badge-rating {{
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; font-weight: 600;
+    padding: 3px 10px; border-radius: 6px;
+}}
+.rat-watch {{ color: #3fb950; background: rgba(35,197,94,.1); }}
+.rat-skim  {{ color: #d29922; background: rgba(210,153,34,.12); }}
+.rat-skip  {{ color: #f85149; background: rgba(242,72,65,.1); }}
+
+/* === QUEUE === */
+.q-empty {{ text-align: center; padding: 34px 16px 26px 16px; }}
+.qe-title {{ font-size: 16px; font-weight: 700; color: #e6edf3; margin-top: 14px; }}
+.qe-desc {{ font-size: 13px; color: #8b949e; margin-top: 4px; }}
+.qe-foot {{
+    text-align: right; color: #388bfd; font-size: 13px; font-weight: 500;
+    padding-top: 14px; border-top: 1px solid #26303b; margin-top: 6px;
+}}
+.q-card {{
+    background: rgba(0,0,0,.18);
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 6px;
+}}
+.q-card .title {{
+    font-weight: 700; font-size: 13px; color: #e6edf3;
+    display: flex; gap: 8px; align-items: center;
+}}
+.qrow {{
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 4px;
+    border-bottom: 1px solid #1d2530;
+}}
+.qrow:last-child {{ border-bottom: none; }}
+.qrow .qtitle {{
+    flex: 1; min-width: 0;
+    font-size: 14px; color: #e6edf3; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
+.qrow .qsub {{ font-size: 12px; color: #8b949e; margin-top: 1px; }}
+.qprog {{
+    width: 90px; height: 4px; flex-shrink: 0;
+    background: #21262d; border-radius: 2px; overflow: hidden;
+}}
+.qprog > div {{ height: 100%; background: #388bfd; border-radius: 2px; }}
+.qlast {{ font-size: 12px; color: #8b949e; flex-shrink: 0; width: 92px; text-align: right; }}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# Force the sidebar open even if the browser remembered it closed
+_SIDEBAR_JS = """
+<script>
+(function () {
+    var tries = 0;
+    var iv = setInterval(function () {
+        var doc = window.parent.document;
+        var btn = doc.querySelector('button[aria-label="Open sidebar"]')
+               || doc.querySelector('[data-testid="collapsedControl"]');
+        if (btn) {
+            btn.click();
+            clearInterval(iv);
+            return;
+        }
+        if (++tries > 40) { clearInterval(iv); }
+    }, 300);
+})();
+</script>
+"""
+
+# ─────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────
+
+
+def _plat_label(p):
+    return {"youtube": "YouTube", "tiktok": "TikTok", "instagram": "Instagram", "local": "Fil"}.get(p, "Video")
+
+
+def _status_badge(s):
+    if s == "analysis_ok":
+        return '<span class="badge-status status-done"><span class="status-dot" style="background:#3fb950;"></span>Analysert</span>'
+    if s == "transcript_ok":
+        return '<span class="badge-status status-done"><span class="status-dot" style="background:#3fb950;"></span>Klar</span>'
+    if s in ("analysis_pending", "transcript_pending", "discovering", "transcribing", "analyzing", "embedding"):
+        return '<span class="badge-status status-run"><span class="status-dot" style="background:#58a6ff;"></span>Behandler</span>'
+    if s == "analysis_failed":
+        return '<span class="badge-status status-err"><span class="status-dot" style="background:#f85149;"></span>Feilet</span>'
+    return f'<span class="badge-status status-wait"><span class="status-dot" style="background:#8b949e;"></span>{s}</span>'
+
+
+def _rec_badge(rec):
+    label, cls = {"watch": ("★ Se", "rat-watch"), "skim": ("★ Skum", "rat-skim"), "skip": ("★ Slep", "rat-skip")}.get(
+        rec or "", ("—", "")
+    )
+    return f'<span class="badge-rating {cls}">{label}</span>'
+
+
+def _fmt_dur(sec):
+    m, s = divmod(sec, 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h} t {m} min"
+    return f"{m} min {s}s"
+
+
+def _fmt_date(dt):
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except Exception:
+            return str(dt)
+    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+    delta = now - dt
+    if delta.days == 0:
+        return f"I dag, {dt.strftime('%H:%M')}"
+    if delta.days == 1:
+        return f"I går, {dt.strftime('%H:%M')}"
+    if delta.days < 7:
+        return f"{delta.days} dager siden"
+    return dt.strftime("%d. %b %Y")
+
+
+def _thumb_html(v, ph_text="VIDEO"):
+    if v.platform == "youtube":
+        return (
+            f'<img class="vthumb" src="https://i.ytimg.com/vi/{v.video_id}/mqdefault.jpg" '
+            f"onerror='this.outerHTML=\"<div class=vthumb-ph>{ph_text}</div>\"'>"
+        )
+    return f'<div class="vthumb-ph">{ph_text}</div>'
+
+
+def _video_cell(v, with_channel=True):
+    chan = f'<div class="vchan">{v.channel or "—"}</div>' if with_channel else ""
+    return (
+        '<div class="cell">'
+        + _thumb_html(v)
+        + f'<div class="vtext"><div class="vtitle">{v.title or v.video_id}</div>{chan}</div>'
+        + '</div>'
+    )
+
+
+def _plat_cell(v):
+    return f'<div class="cell"><span class="plat">{_plat_icon(v.platform)}{_plat_label(v.platform)}</span></div>'
+
+
+def _dur_cell(v):
+    return f'<div class="cell" style="color:#8b949e;font-size:13px;">{v.duration_formatted}</div>'
+
+
+def _status_cell(v):
+    return f'<div class="cell">{_status_badge(v.status.value)}</div>'
+
+
+def _load_analyses():
     with get_connection(Config.DATA_DIR) as conn:
         rows = conn.execute("SELECT * FROM analyses").fetchall()
-    return [
-        {
+    out = {}
+    for r in rows:
+        out[r["video_id"]] = {
             "video_id": r["video_id"],
             "summary_no": r["summary_no"],
             "insights": json.loads(r["insights_json"]),
@@ -265,16 +644,721 @@ def _all_analyses():
             "low_confidence": bool(r["low_confidence"]),
             "confidence_reason": r["confidence_reason"],
         }
-        for r in rows
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────
+def _sidebar():
+    st.sidebar.markdown(
+        """
+        <div style="padding: 4px 12px 20px 12px; margin-bottom: 12px;">
+            <div style="font-size: 25px; font-weight: 800; color: #f0f6fc; letter-spacing: -0.5px;">VKE</div>
+            <div style="font-size: 12.5px; color: #8b949e; margin-top: 5px;">Video Knowledge Extractor</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    for key, label in PAGES:
+        active = st.session_state.page == key
+        if st.sidebar.button(
+            label,
+            key=f"nav_{key}",
+            type="primary" if active else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state.page = key
+            st.rerun()
+    st.sidebar.markdown(
+        '<div style="margin-top: 34px; height: 1px; background: #1f2733; margin-left: 10px; margin-right: 10px;"></div>',
+        unsafe_allow_html=True,
+    )
+    if st.sidebar.button("Hjelp", key="nav_hjaelp", type="secondary", use_container_width=True):
+        st.toast("Legg til videoer → vent på analyse → finn kunnskapen i Søk, Syntese og Ranking.")
+
+
+# ─────────────────────────────────────────────────────────────────
+# OVERVIEW
+# ─────────────────────────────────────────────────────────────────
+def _overview():
+    st.markdown("<h1>Oversikt</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Gjør videoene dine til kunnskap du finner igjen.</p>", unsafe_allow_html=True)
+
+    stats = get_progress_stats(data_dir=Config.DATA_DIR)
+    st.markdown(
+        f'''<div class="stats-bar">
+            <span class="stat"><b>{stats["total_videos"]}</b> videoer</span><span class="sep"></span>
+            <span class="stat"><b>{stats["analyses_ok"]}</b> analysert</span><span class="sep"></span>
+            <span class="stat"><b>{_fmt_dur(stats["total_duration_seconds"])}</b> innhold</span>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([215, 100])
+
+    with left:
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Legg til videoer</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="panel-desc">Lim inn lenker fra YouTube, TikTok eller Instagram.</div>',
+                unsafe_allow_html=True,
+            )
+            urls = st.text_area(
+                "URLer",
+                placeholder="Én videolenke per linje",
+                label_visibility="collapsed",
+                height=90,
+                key="ov_u",
+            )
+            b1, b2 = st.columns([5, 7])
+            with b1:
+                files = st.file_uploader(
+                    "Last opp filer",
+                    type=["mp4", "mov", "mkv", "m4a", "mp3"],
+                    accept_multiple_files=True,
+                    key="ov_f",
+                    label_visibility="collapsed",
+                )
+            with b2:
+                url_list = [l.strip() for l in (urls or "").splitlines() if l.strip()]
+                if st.button("Analyser videoer", type="primary", use_container_width=True):
+                    import uuid as _u
+
+                    bad, added = [], 0
+                    opts = {"transcribe": True, "ocr": False, "vision": False, "embed": True}
+                    for url in url_list:
+                        plat = detect_platform(url)
+                        if plat is None:
+                            bad.append(url)
+                            continue
+                        enqueue_job("web", url, platform=plat, options=opts, data_dir=Config.DATA_DIR)
+                        added += 1
+                    for up in files or []:
+                        dest = Config.DATA_DIR / "uploads" / f"{_u.uuid4().hex}{Path(up.name).suffix}"
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_bytes(up.getvalue())
+                        enqueue_job(
+                            "web",
+                            str(dest),
+                            platform="local",
+                            title=Path(up.name).stem,
+                            options=opts,
+                            data_dir=Config.DATA_DIR,
+                        )
+                        added += 1
+                    if bad:
+                        st.warning("Ukjente lenker: " + ", ".join(bad))
+                    if added:
+                        st.success(f"{added} video(er) i køen")
+                        st.rerun()
+            with st.expander("Analysevalg"):
+                c1, c2, _ = st.columns(3)
+                with c1:
+                    st.checkbox("Transkriber", value=True, key="ov_t")
+                with c2:
+                    st.checkbox("OCR (tekst på skjerm)", value=False, key="ov_r")
+
+    with right:
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Behandlingskø</div>', unsafe_allow_html=True)
+            jobs = list_jobs(limit=5, data_dir=Config.DATA_DIR)
+            if not jobs:
+                st.markdown(
+                    """<div class="q-empty">
+                        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <div class="qe-title">Alt er ferdig</div>
+                        <div class="qe-desc">Ingen videoer venter på analyse.</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Se hele køen →", key="q1", type="secondary"):
+                    st.session_state.page = "ko"
+                    st.rerun()
+            else:
+                for job in jobs:
+                    title = (job.get("title") or job.get("url") or "Video")[:60]
+                    st.markdown(
+                        f'''<div class="q-card">
+                            <div class="title">{title}</div>
+                        </div>''',
+                        unsafe_allow_html=True,
+                    )
+                if st.button("Se hele køen →", key="q2", type="secondary"):
+                    st.session_state.page = "ko"
+                    st.rerun()
+
+    # Recent videos
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    recent = sorted(videos, key=lambda v: v.created_at, reverse=True)[:6]
+    if not recent:
+        return
+
+    h1, h2 = st.columns([1, 1])
+    with h1:
+        st.markdown(
+            f'<div class="secrow"><span class="sec-title">Sist lagt til</span>'
+            f'<span class="count-pill">{len(videos)} videoer</span></div>',
+            unsafe_allow_html=True,
+        )
+    with h2:
+        if st.button("Se alle videoer →", key="sa", type="secondary"):
+            st.session_state.page = "bibliotek"
+            st.rerun()
+
+    with st.container(border=True):
+        st.markdown('<div class="tblbox"></div>', unsafe_allow_html=True)
+        ratios = [0.7, 4.4, 1.6, 1.0, 1.5, 1.5, 0.7]
+        hc = st.columns(ratios)
+        for col, h in zip(
+            hc, ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Platform", "Varighet", "Status", "Lagt til", ""]
+        ):
+            with col:
+                st.markdown(f'<div class="tbl-header">{h}</div>', unsafe_allow_html=True)
+
+        for v in recent:
+            rc = st.columns(ratios)
+            with rc[0]:
+                st.markdown('<div class="cell"><span class="cbx"></span></div>', unsafe_allow_html=True)
+            with rc[1]:
+                st.markdown(_video_cell(v, with_channel=False), unsafe_allow_html=True)
+            with rc[2]:
+                st.markdown(_plat_cell(v), unsafe_allow_html=True)
+            with rc[3]:
+                st.markdown(_dur_cell(v), unsafe_allow_html=True)
+            with rc[4]:
+                st.markdown(_status_cell(v), unsafe_allow_html=True)
+            with rc[5]:
+                st.markdown(
+                    f'<div class="cell" style="color:#8b949e;font-size:13px;">{_fmt_date(v.created_at)}</div>',
+                    unsafe_allow_html=True,
+                )
+            with rc[6]:
+                st.markdown(
+                    '<div class="cell" style="justify-content:flex-end;"><span class="dots">···</span></div>',
+                    unsafe_allow_html=True,
+                )
+
+
+# ─────────────────────────────────────────────────────────────────
+# QUEUE (KØ)
+# ─────────────────────────────────────────────────────────────────
+def _job_title(j):
+    t = (j.get("title") or "").strip()
+    if t:
+        return t
+    url = j.get("url") or ""
+    if url.startswith(("http://", "https://")):
+        return url[:70] + ("…" if len(url) > 70 else "")
+    return Path(url).stem or "Video"
+
+
+def _job_row(j, show_progress):
+    label = STAGE_LABELS.get(j["status"], j["status"])
+    if j["status"] == "queued":
+        badge = '<span class="badge-status status-wait"><span class="status-dot" style="background:#8b949e;"></span>I kø</span>'
+    elif j["status"] == "done":
+        badge = '<span class="badge-status status-done"><span class="status-dot" style="background:#3fb950;"></span>Ferdig</span>'
+    elif j["status"] == "failed":
+        badge = '<span class="badge-status status-err"><span class="status-dot" style="background:#f85149;"></span>Feilet</span>'
+    else:
+        badge = f'<span class="badge-status status-run"><span class="status-dot" style="background:#58a6ff;"></span>{label}</span>'
+    if show_progress:
+        prog = max(0, min(100, int(j.get("progress") or 0)))
+        prog_html = f'<div class="qprog"><div style="width:{prog}%"></div></div>'
+    else:
+        prog_html = '<div class="qprog" style="background:transparent;"></div>'
+    sub = _plat_label(j.get("platform") or "youtube")
+    err = (j.get("error_message") or "")[:60]
+    if j["status"] == "failed" and err:
+        sub += f" · {err}"
+    return f'''<div class="qrow">
+        {_plat_icon(j.get("platform") or "youtube")}
+        <div style="flex:1;min-width:0;">
+            <div class="qtitle">{_job_title(j)}</div>
+            <div class="qsub">{sub}</div>
+        </div>
+        {badge}
+        {prog_html}
+        <span class="qlast">{_fmt_date(j["created_at"])}</span>
+    </div>'''
+
+
+def _queue():
+    st.markdown("<h1>Kø</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Videoer som venter på eller er under analyse.</p>", unsafe_allow_html=True)
+
+    jobs = list_jobs(limit=100, data_dir=Config.DATA_DIR)
+    active = [j for j in jobs if j["status"] not in ("done", "failed")]
+    active.sort(key=lambda j: j["created_at"])  # FIFO: eldste først
+    finished = [j for j in jobs if j["status"] in ("done", "failed")][:10]
+
+    n_queued = sum(1 for j in active if j["status"] == "queued")
+    n_running = len(active) - n_queued
+    st.markdown(
+        f'''<div class="stats-bar">
+            <span class="stat"><b>{n_queued}</b> venter i kø</span><span class="sep"></span>
+            <span class="stat"><b>{n_running}</b> behandles nå</span><span class="sep"></span>
+            <span class="stat"><b>{len(finished)}</b> behandlet</span>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.markdown('<div class="panel-title">Aktiv kø</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="panel-desc">Nye videoer behandles nederst opp i rekkefølgen (først inn – først ut).</div>',
+            unsafe_allow_html=True,
+        )
+        if not active:
+            st.markdown(
+                """<div class="q-empty">
+                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div class="qe-title">Køen er tom</div>
+                    <div class="qe-desc">Ingen videoer venter på analyse.</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+        else:
+            for j in active:
+                st.markdown(_job_row(j, show_progress=True), unsafe_allow_html=True)
+
+    h1, h2 = st.columns([1, 1])
+    with h1:
+        st.markdown(
+            f'<div class="secrow"><span class="sec-title">Sist behandlet</span>'
+            f'<span class="count-pill">{len(finished)} siste</span></div>',
+            unsafe_allow_html=True,
+        )
+    with h2:
+        if st.button("Legg til videoer →", key="q_add", type="secondary"):
+            st.session_state.page = "oversikt"
+            st.rerun()
+
+    if not finished:
+        st.markdown('<p class="sub-lead" style="padding-top:10px;">Ingen behandlinger ennå.</p>', unsafe_allow_html=True)
+        return
+
+    with st.container(border=True):
+        for j in finished:
+            st.markdown(_job_row(j, show_progress=False), unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────
+# LIBRARY
+# ─────────────────────────────────────────────────────────────────
+def _page_window(page, total):
+    if total <= 6:
+        return list(range(1, total + 1))
+    start = max(1, min(page - 2, total - 4))
+    return list(range(start, start + 5))
+
+
+def _library():
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    analyses = _load_analyses()
+    stats = get_progress_stats(data_dir=Config.DATA_DIR)
+
+    st.markdown("<h1>Bibliotek</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Alle videoene dine, med innsikt og nøkkelpunkter samlet.</p>", unsafe_allow_html=True)
+    st.markdown(
+        f"<p class='sub-lead'>{len(videos)} videoer &nbsp;·&nbsp; {_fmt_dur(stats['total_duration_seconds'])}</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Filters
+    f1, f2, f3, f4, f5 = st.columns([4.4, 1.6, 1.5, 1.4, 1.7])
+    with f1:
+        q = st.text_input(
+            "Søk",
+            placeholder="Søk etter tittel, kanal eller innhold",
+            label_visibility="collapsed",
+            key="ls",
+        )
+    with f2:
+        plat_f = st.selectbox(
+            "Plattform", ["Alle plattformer", "YouTube", "TikTok", "Instagram", "Lokale"],
+            label_visibility="collapsed", key="lp",
+        )
+    with f3:
+        status_f = st.selectbox(
+            "Status", ["Alle statuser"] + [s.value for s in VideoStatus],
+            label_visibility="collapsed", key="lst",
+        )
+    with f4:
+        rec_f = st.selectbox(
+            "Vurdering", ["Relevans", "Se", "Skum", "Slep"],
+            label_visibility="collapsed", key="lr",
+        )
+    with f5:
+        sort_f = st.selectbox(
+            "Sorter", ["Nyeste først", "Eldste først", "Tittel A-Å", "Relevans (høy-lav)"],
+            label_visibility="collapsed", key="lsr",
+        )
+
+    pmap = {"YouTube": "youtube", "TikTok": "tiktok", "Instagram": "instagram", "Lokale": "local"}
+    filtered = [
+        v
+        for v in videos
+        if (plat_f == "Alle plattformer" or pmap.get(plat_f) == v.platform)
+        and (status_f == "Alle statuser" or v.status.value == status_f)
     ]
+    if rec_f != "Relevans":
+        rec_map = {"Se": "watch", "Skum": "skim", "Slep": "skip"}
+        filtered = [v for v in filtered if analyses.get(v.video_id, {}).get("recommendation") == rec_map[rec_f]]
+    if q.strip():
+        ql = q.lower()
+        filtered = [v for v in filtered if ql in (v.title or "").lower() or ql in (v.channel or "").lower()]
+    if st.session_state.lib_tab == "anbefalt":
+        filtered = [v for v in filtered if analyses.get(v.video_id, {}).get("recommendation") == "watch"]
+    elif st.session_state.lib_tab == "oppsummert":
+        filtered = [v for v in filtered if v.video_id in analyses]
+    if sort_f == "Nyeste først":
+        filtered.sort(key=lambda v: v.created_at, reverse=True)
+    elif sort_f == "Eldste først":
+        filtered.sort(key=lambda v: v.created_at)
+    elif sort_f == "Tittel A-Å":
+        filtered.sort(key=lambda v: (v.title or "").lower())
+    elif sort_f == "Relevans (høy-lav)":
+        filtered.sort(key=lambda v: analyses.get(v.video_id, {}).get("relevance_score", 0), reverse=True)
+
+    # Tabs (underline style)
+    with st.container(border=True):
+        st.markdown('<div class="tabmark"></div>', unsafe_allow_html=True)
+        tc = st.columns(3)
+        tab_labels = [
+            ("alle", f"Alle videoer   ·   {len(videos)}"),
+            ("anbefalt", "Anbefalt å se"),
+            ("oppsummert", "Kort oppsummert"),
+        ]
+        for i, (k, label) in enumerate(tab_labels):
+            with tc[i]:
+                btn = "primary" if st.session_state.lib_tab == k else "secondary"
+                if st.button(label, key=f"lt_{k}", type=btn, use_container_width=True):
+                    st.session_state.lib_tab = k
+                    st.rerun()
+
+    per_page = 8
+    total_pages = max(1, math.ceil(len(filtered) / per_page))
+    if st.session_state.lib_page > total_pages:
+        st.session_state.lib_page = 1
+    page = st.session_state.lib_page
+    start = (page - 1) * per_page
+    items = filtered[start : start + per_page]
+
+    # Table
+    if items:
+        with st.container(border=True):
+            st.markdown('<div class="tblbox"></div>', unsafe_allow_html=True)
+            ratios = [0.7, 4.0, 1.6, 1.0, 1.4, 1.5, 1.8]
+            hc = st.columns(ratios)
+            for col, h in zip(
+                hc,
+                ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Platform", "Varighet", "Vurdering", "Status", ""],
+            ):
+                with col:
+                    st.markdown(f'<div class="tbl-header">{h}</div>', unsafe_allow_html=True)
+
+            for v in items:
+                rc = st.columns(ratios)
+                with rc[0]:
+                    st.markdown('<div class="cell"><span class="cbx"></span></div>', unsafe_allow_html=True)
+                with rc[1]:
+                    st.markdown(_video_cell(v, with_channel=True), unsafe_allow_html=True)
+                with rc[2]:
+                    st.markdown(_plat_cell(v), unsafe_allow_html=True)
+                with rc[3]:
+                    st.markdown(_dur_cell(v), unsafe_allow_html=True)
+                with rc[4]:
+                    an = analyses.get(v.video_id)
+                    st.markdown(
+                        f'<div class="cell">{_rec_badge(an.get("recommendation", "")) if an else "—"}</div>',
+                        unsafe_allow_html=True,
+                    )
+                with rc[5]:
+                    st.markdown(_status_cell(v), unsafe_allow_html=True)
+                with rc[6]:
+                    if v.video_id in analyses:
+                        a1, a2 = st.columns([3, 1])
+                        with a1:
+                            if st.button("Åpne analyse", key=f"lb_{v.video_id}", type="tertiary"):
+                                st.session_state[f"d_{v.video_id}"] = True
+                        with a2:
+                            st.markdown(
+                                '<div class="cell" style="justify-content:flex-end;"><span class="dots">···</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.markdown(
+                            '<div class="cell" style="justify-content:flex-end;"><span class="dots">···</span></div>',
+                            unsafe_allow_html=True,
+                        )
+
+        # Footer + pagination (outside the box)
+        fl, fr = st.columns([2, 1])
+        with fl:
+            st.markdown(
+                f'<div class="pageinfo">Viser {start+1}–{min(start+per_page, len(filtered))} av {len(filtered)} videoer</div>',
+                unsafe_allow_html=True,
+            )
+        with fr:
+            if total_pages > 1:
+                pages = _page_window(page, total_pages)
+                cols = st.columns([0.8] + [1.0] * len(pages) + [0.8])
+                with cols[0]:
+                    if st.button("‹", key="pg_p", type="secondary", disabled=page <= 1):
+                        st.session_state.lib_page = page - 1
+                        st.rerun()
+                for j, p in enumerate(pages):
+                    with cols[1 + j]:
+                        if st.button(
+                            str(p),
+                            key=f"pg_{p}",
+                            type="primary" if p == page else "secondary",
+                        ):
+                            st.session_state.lib_page = p
+                            st.rerun()
+                with cols[-1]:
+                    if st.button("›", key="pg_n", type="secondary", disabled=page >= total_pages):
+                        st.session_state.lib_page = page + 1
+                        st.rerun()
+    else:
+        st.info("Ingen videoer matcher filteret.")
+
+    # Detail view
+    for v in items:
+        if st.session_state.get(f"d_{v.video_id}"):
+            _detail(v, analyses.get(v.video_id))
+            if st.button("✕ Lukk analyse", key=f"cl_{v.video_id}"):
+                st.session_state.pop(f"d_{v.video_id}", None)
+                st.rerun()
 
 
-def _ts_to_seconds(ts: str) -> int | None:
+# ─────────────────────────────────────────────────────────────────
+# SEARCH
+# ─────────────────────────────────────────────────────────────────
+def _search():
+    st.markdown("<h1>Søk</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Søk i transkripter og analyser.</p>", unsafe_allow_html=True)
+    query = st.text_input("Søksterm", placeholder="Søksterm", label_visibility="collapsed", key="sq")
+    if not query.strip():
+        st.info("Skriv et søkeord for å søke i transkriptene.")
+        return
+
+    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
+
+    with st.container(border=True):
+        st.markdown('<div class="panel-title">Nøkkelordsøk (SQLite FTS5)</div>', unsafe_allow_html=True)
+        hits = search_transcripts(query, limit=50, data_dir=Config.DATA_DIR)
+        if not hits:
+            st.warning(f"Ingen treff for «{query}».")
+        else:
+            st.markdown(
+                f'<p style="color:#8b949e; font-size:13px; margin-bottom:10px;">{len(hits)} treff</p>',
+                unsafe_allow_html=True,
+            )
+            for hit in hits:
+                vid = videos.get(hit["video_id"])
+                link = ""
+                if vid and vid.platform == "youtube":
+                    link = (
+                        f'<a href="https://www.youtube.com/watch?v={hit["video_id"]}" target="_blank" '
+                        'style="font-size:12px; color:#388bfd;">Åpne video →</a>'
+                    )
+                st.markdown(
+                    f'''<div class="q-card">
+                        <div class="title">{vid.title if vid else hit["video_id"]}</div>
+                        <div style="font-size:12px; color:#8b949e; margin-bottom:4px;">{vid.channel if vid else ""}</div>
+                        <div style="font-size:13px; color:#c9d1d9; line-height:1.5;">{hit.get("snippet", "")}</div>
+                        {link}
+                    </div>''',
+                    unsafe_allow_html=True,
+                )
+
+    from video_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
+
+    if embeddings_configured():
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Semantisk søk (betydning)</div>', unsafe_allow_html=True)
+            try:
+                sem = search_embeddings(query, data_dir=Config.DATA_DIR, top_k=10)
+            except Exception as exc:
+                st.error(f"Feilet: {exc}")
+                return
+            if not sem:
+                st.info("Ingen embeddings ennå.")
+            else:
+                for r in sem:
+                    vid = videos.get(r["video_id"])
+                    st.markdown(
+                        f'''<div class="q-card">
+                            <div class="title">{vid.title if vid else r["video_id"]}</div>
+                            <div style="font-size:11px; color:#8b949e; margin-bottom:2px;">chunk {r["chunk_index"]} · likhet {r["score"]:.3f}</div>
+                            <div style="font-size:13px; color:#c9d1d9;">{r["snippet"][:300]}</div>
+                        </div>''',
+                        unsafe_allow_html=True,
+                    )
+
+
+# ─────────────────────────────────────────────────────────────────
+# SYNTHESIS
+# ─────────────────────────────────────────────────────────────────
+def _synthesis():
+    st.markdown("<h1>Syntese</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Samlet analyse av hele biblioteket ditt.</p>", unsafe_allow_html=True)
+    if st.button("Generer / oppdater syntese", type="primary"):
+        with st.spinner("Genererer syntese..."):
+            try:
+                run_synthesis(force=True)
+            except Exception as exc:
+                st.error(f"Feilet: {exc}")
+        st.rerun()
+    synth = load_synthesis(data_dir=Config.DATA_DIR)
+    if not synth:
+        st.info("Ingen syntese ennå. Klikk «Generer / oppdater syntese» for å lage en.")
+        return
+
+    st.markdown(
+        f'<p style="color:#8b949e; font-size:12px;">Generert: {synth.get("created_at", "")}</p>',
+        unsafe_allow_html=True,
+    )
+    sections = [
+        ("Samlet tema", synth.get("theme_no", "—")),
+        ("Felles tema", "\n".join(f"- {t}" for t in synth.get("shared_topics", []) or ["—"])),
+        (
+            "Motsetninger",
+            "\n".join(
+                f"- **{c.get('topic')}** ({', '.join(c.get('videos', []))}): {c.get('note')}"
+                for c in synth.get("contradictions", [])
+            )
+            or "Ingen",
+        ),
+        (
+            "Unik kunnskap",
+            "\n".join(
+                f"- **{u.get('video_id', '')}**: {u.get('knowledge', '')}" for u in synth.get("unique_knowledge", [])
+            )
+            or "—",
+        ),
+        ("Mangler (gaps)", "\n".join(f"- {g}" for g in synth.get("gaps", [])) or "—"),
+        (
+            "Anbefalt rekkefølge",
+            "\n".join(
+                f"- **{w.get('video_id', '')}**: {w.get('reason', '')}" for w in synth.get("watch_order", [])
+            )
+            or "—",
+        ),
+    ]
+    with st.container(border=True):
+        for title, content in sections:
+            st.markdown(
+                f"<h3 style='font-size:15px; color:#e6edf3; font-weight:700; margin:14px 0 6px 0;'>{title}</h3>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div style="font-size:14px; color:#c9d1d9; line-height:1.6;">{content}</div>',
+                unsafe_allow_html=True,
+            )
+    if synth.get("recommendation"):
+        st.markdown(
+            "<h3 style='font-size:16px; color:#f0f6fc; font-weight:700; margin-top:16px;'>Anbefaling</h3>",
+            unsafe_allow_html=True,
+        )
+        st.write(synth["recommendation"])
+
+
+# ─────────────────────────────────────────────────────────────────
+# RANKING
+# ─────────────────────────────────────────────────────────────────
+def _ranking():
+    st.markdown("<h1>Ranking</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Videoer rangert etter verdi (praktisk × relevans).</p>", unsafe_allow_html=True)
+    analyses = list(_load_analyses().values())
+    if not analyses:
+        st.info("Ingen analyser ennå.")
+        return
+    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
+    scored = [(a, (a["practical_score"] * a["relevance_score"]) / (a["redundancy_score"] + 1)) for a in analyses]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    with st.container(border=True):
+        for rank, (a, score) in enumerate(scored, 1):
+            v = videos.get(a["video_id"])
+            title = v.title if v else a["video_id"]
+            st.markdown(
+                f'''<div class="cell tbline" style="gap:16px; padding:12px 4px;">
+                    <div style="font-size:18px; font-weight:800; color:#388bfd; min-width:28px; text-align:center;">{rank}</div>
+                    <div style="flex:1;">
+                        <div style="font-weight:700; color:#e6edf3; font-size:14px;">{title}</div>
+                        <div style="font-size:12px; color:#8b949e; margin-top:2px;">verdi: {score:.1f} · praktisk {a["practical_score"]} · relevans {a["relevance_score"]}</div>
+                    </div>
+                </div>''',
+                unsafe_allow_html=True,
+            )
+
+
+# ─────────────────────────────────────────────────────────────────
+# EXPORT
+# ─────────────────────────────────────────────────────────────────
+def _export():
+    st.markdown("<h1>Eksport</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>Eksporter data til JSON eller Markdown.</p>", unsafe_allow_html=True)
+    videos = get_all_videos(data_dir=Config.DATA_DIR)
+    analyses = list(_load_analyses().values())
+    c1, c2 = st.columns(2)
+    with c1:
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">JSON</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="panel-desc">Komplett datasett med videoer og analyser.</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Eksportér JSON", type="primary", use_container_width=True):
+                data = {
+                    "videos": [
+                        {
+                            "video_id": v.video_id,
+                            "title": v.title,
+                            "url": v.url,
+                            "channel": v.channel,
+                            "duration_seconds": v.duration_seconds,
+                            "status": v.status.value,
+                            "platform": v.platform,
+                        }
+                        for v in videos
+                    ],
+                    "analyses": analyses,
+                }
+                p = Config.EXPORTS_DIR / "export.json"
+                p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                st.success("Eksportert!")
+                st.download_button(
+                    "Last ned", p.read_text(encoding="utf-8"), "vke_export.json", use_container_width=True
+                )
+    with c2:
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Markdown</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="panel-desc">Obsidian-vennlige notater.</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Eksportér Markdown", type="primary", use_container_width=True):
+                md_files = export_markdown(data_dir=Config.DATA_DIR)
+                st.success(f"{len(md_files)} filer eksportert")
+
+
+# ─────────────────────────────────────────────────────────────────
+# VIDEO DETAIL
+# ─────────────────────────────────────────────────────────────────
+def _ts_sec(ts):
     try:
         nums = [int(x) for x in (ts or "").split(":")]
-    except ValueError:
-        return None
-    if not 1 <= len(nums) <= 3:
+    except Exception:
         return None
     total = 0
     for n in nums:
@@ -282,453 +1366,101 @@ def _ts_to_seconds(ts: str) -> int | None:
     return total
 
 
-def _render_video_detail(video, analysis: dict | None) -> None:
+def _detail(video, analysis):
     st.markdown(
-        f'{_plat_badge(video.platform)} **{video.title or video.video_id}**   '
-        f'<span style="color:#8b93a7">{video.channel} · {video.duration_formatted} · '
-        f'{video.status.value}</span>',
+        f'''<div style="margin-top:8px; padding:16px; background:#131a22; border:1px solid #26303b; border-radius:12px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap;">
+                {_plat_icon(video.platform)}
+                <span style="font-weight:700; font-size:15px; color:#f0f6fc;">{video.title or video.video_id}</span>
+            </div>
+            <div style="color:#8b949e; font-size:12px;">
+                {video.channel or "—"} · {video.duration_formatted} ·
+                <a href="{video.url}" target="_blank" style="color:#388bfd;">Åpne i {video.platform}</a>
+            </div>
+        </div>''',
         unsafe_allow_html=True,
     )
-    st.markdown(f"[Åpne {video.platform}]({video.url})")
-
     if not analysis:
-        st.info("Ingen analyse tilgjengelig ennå.")
+        st.info("Ingen analyse tilgjengelig.")
         return
-
-    st.markdown("#### Sammendrag")
+    st.markdown(
+        "<h3 style='font-size:15px; color:#e6edf3; font-weight:700; margin-top:14px;'>Sammendrag</h3>",
+        unsafe_allow_html=True,
+    )
     st.write(analysis["summary_no"])
-    st.markdown("#### Innsikter")
-    st.caption("✅ sitat verifisert i transkriptet · ⚠️ sitat ikke funnet · • ingen sitat. Tidsstempel er klikkbart (YouTube).")
+    st.markdown(
+        "<h3 style='font-size:15px; color:#e6edf3; font-weight:700;'>Innsikter</h3>",
+        unsafe_allow_html=True,
+    )
+    st.caption("✅ sitat verifisert · ⚠️ ikke funnet · • ingen sitat")
     for ins in analysis["insights"]:
         mark = "✅" if ins.get("verified") else ("⚠️" if ins.get("quote") else "•")
         ts = ins.get("timestamp") or ""
-        ts_link = ""
+        tl = ""
         if ts and video.platform == "youtube":
-            secs = _ts_to_seconds(ts)
+            secs = _ts_sec(ts)
             if secs is not None:
-                deep_link = f"https://www.youtube.com/watch?v={video.video_id}&t={secs}s"
-                ts_link = f" [⏱ {ts}]({deep_link})"
+                tl = f" [⏱ {ts}](https://www.youtube.com/watch?v={video.video_id}&t={secs}s)"
         elif ts:
-            ts_link = f" ⏱ {ts}"
-        st.write(f"- {mark} **{ins['insight']}**{ts_link}: {ins['explanation']}")
-        reason = ins.get("verification_reason") or ""
-        if reason:
-            st.caption(f"   {mark} {reason}")
-
-    st.markdown("#### Teknikker og verktøy")
+            tl = f" ⏱ {ts}"
+        st.write(f"- {mark} **{ins['insight']}**{tl}: {ins['explanation']}")
+    st.markdown(
+        "<h3 style='font-size:15px; color:#e6edf3; font-weight:700;'>Teknikker og verktøy</h3>",
+        unsafe_allow_html=True,
+    )
     st.write(", ".join(analysis["techniques_tools"]) or "Ingen")
-    st.markdown("#### Handlingsbare steg")
+    st.markdown(
+        "<h3 style='font-size:15px; color:#e6edf3; font-weight:700;'>Handlingsbare steg</h3>",
+        unsafe_allow_html=True,
+    )
     for step in analysis["actionable_steps"]:
         st.write(f"- {step}")
-
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Relevans", analysis["relevance_score"])
     c2.metric("Dybde", analysis["depth_score"])
-    c3.metric("Praktisk nytte", analysis["practical_score"])
+    c3.metric("Praktisk", analysis["practical_score"])
     c4.metric("Redundans", analysis["redundancy_score"])
     rec = analysis["recommendation"]
-    color = {"watch": "green", "skim": "orange", "skip": "red"}.get(rec, "gray")
+    rc = {"watch": "#3fb950", "skim": "#d29922", "skip": "#f85149"}.get(rec, "#8b949e")
     st.markdown(
-        f"**Anbefaling:** :{color}[{rec.upper()}] — {analysis['recommendation_justification']}"
+        f'<p><strong>Anbefaling:</strong> <span style="color:{rc}; font-weight:700;">{rec.upper()}</span> — {analysis["recommendation_justification"]}</p>',
+        unsafe_allow_html=True,
     )
     st.write(f"**Estimert nøkkel-tid:** {analysis['estimated_key_watch_minutes']:.1f} min")
     if analysis["low_confidence"]:
         st.warning(f"Lav konfidens: {analysis['confidence_reason']}")
-
     with st.expander("Transkript"):
         t = get_transcript(video.video_id, data_dir=Config.DATA_DIR)
         if t:
             for seg in t.segments:
                 st.markdown(f"`{seg.timestamp}` — {seg.text}")
         else:
-            st.caption("Ingen transkript lagret.")
-
-    screen = get_screen_text(video.video_id, data_dir=Config.DATA_DIR)
-    if screen:
-        with st.expander(f"Tekst på skjermen (OCR, {len(screen)} treff)"):
-            for item in screen:
-                st.markdown(f"`{int(item['time_seconds']) // 60}:{int(item['time_seconds']) % 60:02d}` — {item['text']}")
-
-    frames = get_frame_descriptions(video.video_id, data_dir=Config.DATA_DIR)
-    if frames:
-        with st.expander(f"Beskrivelse av skjermen ({len(frames)} frames)"):
-            for item in frames:
-                st.markdown(f"`{int(item['time_seconds']) // 60}:{int(item['time_seconds']) % 60:02d}` — {item['description']}")
+            st.caption("Ingen transkript.")
 
 
-# ---------------------------------------------------------------------------
-# Page: Send
-# ---------------------------------------------------------------------------
-@st.fragment(run_every=2)
-def _live_queue():
-    jobs = list_jobs(limit=8, data_dir=Config.DATA_DIR)
-    if not jobs:
-        st.markdown('<span class="vke-empty">Køen er tom. Send noen videoer over ↑</span>', unsafe_allow_html=True)
-        return
-    done_count = sum(1 for j in jobs if j["status"] == "done")
-    st.markdown(f"**Kø** &nbsp;<span style='color:#8b93a7; font-size:13px'>{len(jobs)} siste — live-oppdatering</span>")
-    for job in jobs:
-        st.markdown(_job_card_html(job), unsafe_allow_html=True)
-
-
-def render_send() -> None:
-    st.markdown("### 📥 Send nye videoer")
-    st.caption("Lime inn lenker fra YouTube, TikTok eller Instagram (én per linje) – eller dra inn lokale videofiler. De transkriberes og analyseres automatisk av worker-en.")
-
-    urls_text = st.text_area(
-        "Lenker",
-        height=110,
-        placeholder="https://www.tiktok.com/@bruker/video/123…\nhttps://www.youtube.com/watch?v=…",
-    )
-    files = st.file_uploader(
-        "Eller dra inn videofiler",
-        type=["mp4", "mov", "mkv", "webm", "m4v", "avi", "m4a", "mp3", "wav", "ogg"],
-        accept_multiple_files=True,
-    )
-
-    c1, c2, c3, c4 = st.columns(4)
-    opt_transcribe = c1.toggle("🎧 Transkriber (Whisper)", value=True)
-    opt_ocr = c2.toggle("📝 Tekst på skjerm (OCR)", value=True)
-    opt_vision = c3.toggle("👁 Visjonsbeskrivelse", value=False)
-    opt_embed = c4.toggle("🔢 Semantisk søk", value=True)
-
-    urls = [ln.strip() for ln in urls_text.splitlines() if ln.strip()]
-    n = len(urls) + len(files or [])
-    cost_text = "0 kr (lokal Ollama)" if Config.USE_OLLAMA else "API-kostnad (se `cost`)"
-    st.markdown(f"⏱ {n} video(er) i kø &nbsp;·&nbsp; 💰 {cost_text} &nbsp;·&nbsp; worker-en kjører når den er i gang")
-
-    if st.button("🚀 Send videoer", type="primary", use_container_width=True, disabled=n == 0):
-        bad = []
-        added = 0
-        options = {"transcribe": opt_transcribe, "ocr": opt_ocr, "vision": opt_vision, "embed": opt_embed}
-        for url in urls:
-            platform = detect_platform(url)
-            if platform is None:
-                bad.append(url)
-                continue
-            enqueue_job("web", url, platform=platform, options=options, data_dir=Config.DATA_DIR)
-            added += 1
-        for upload in files or []:
-            import uuid as _uuid
-
-            suffix = Path(upload.name).suffix.lower() or ".mp4"
-            dest = Config.DATA_DIR / "uploads" / f"{_uuid.uuid4().hex}{suffix}"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(upload.getvalue())
-            enqueue_job("web", str(dest), platform="local", title=Path(upload.name).stem,
-                        options=options, data_dir=Config.DATA_DIR)
-            added += 1
-        if bad:
-            st.warning("Ukjente lenker hoppet over: " + ", ".join(bad))
-        if added:
-            st.success(f"{added} video(er) sendt til køen.")
-        st.rerun()
-
-    st.markdown("---")
-    _live_queue()
-
-
-# ---------------------------------------------------------------------------
-# Page: Bibliotek
-# ---------------------------------------------------------------------------
-def _card_html(video, analysis: dict | None) -> str:
-    thumb_cls = {"youtube": "thumb-yt", "tiktok": "thumb-tt", "instagram": "thumb-ig"}.get(
-        video.platform, "thumb-local"
-    )
-    if analysis:
-        foot = (
-            f'{_rec_chip(analysis["recommendation"])} '
-            f'<span>{analysis["estimated_key_watch_minutes"]:.0f} nøkkelmin</span>'
-        )
-        scores = (
-            f'<span>Rel {_score_dots(analysis["relevance_score"])}</span>'
-            f'<span>Dyb {_score_dots(analysis["depth_score"])}</span>'
-        )
-    elif video.status.value in ("discovered", "transcript_pending"):
-        foot = "<span>Venter i pipeline…</span>"
-        scores = ""
-    elif video.status.value == "transcript_unavailable":
-        foot = "<span>Ingen transkript</span>"
-        scores = ""
+# ─────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────
+def main():
+    st.iframe(_SIDEBAR_JS, height=1)
+    _sidebar()
+    page = st.session_state.page
+    if page == "oversikt":
+        _overview()
+    elif page == "bibliotek":
+        _library()
+    elif page == "ko":
+        _queue()
+    elif page == "sok":
+        _search()
+    elif page == "syntese":
+        _synthesis()
+    elif page == "ranking":
+        _ranking()
+    elif page == "eksport":
+        _export()
     else:
-        foot = "<span>Analyseres…</span>"
-        scores = ""
-    return (
-        f'<div class="vke-card">'
-        f'<div class="vke-thumb {thumb_cls}">{_plat_badge(video.platform).replace("plat ", "plat vke-plat ")}'
-        f'<span class="vke-play">▶</span>'
-        f'<span class="vke-dur">{video.duration_formatted}</span></div>'
-        f'<div class="vke-card-body">'
-        f'<div class="vke-card-title">{video.title or video.video_id}</div>'
-        f'<div class="vke-card-chan">{video.channel or "—"} · {video.platform}</div>'
-        f'<div class="vke-scores">{scores}</div>'
-        f'<div class="vke-card-foot">{foot}</div>'
-        f'</div></div>'
-    )
-
-
-def render_library() -> None:
-    st.markdown("### 📚 Bibliotek")
-    stats = get_progress_stats(data_dir=Config.DATA_DIR)
-    st.caption(f'{stats["total_videos"]} videoer · {stats["transcripts_ok"]} transkribert · {stats["analyses_ok"]} analysert · {stats["total_duration_formatted"]}')
-
-    videos = get_all_videos(data_dir=Config.DATA_DIR)
-    analyses = {a["video_id"]: a for a in _all_analyses()}
-
-    f1, f2, f3, f4 = st.columns([1.2, 1.2, 1.2, 1.6])
-    plat_f = f1.selectbox("Plattform", ["Alle", "YouTube", "TikTok", "Instagram", "Lokale"])
-    status_f = f2.selectbox(
-        "Status",
-        ["Alle"] + [s.value for s in VideoStatus],
-        format_func=lambda s: s if s == "Alle" else s,
-    )
-    sort_f = f3.selectbox("Sorter", ["Nyeste", "Eldste", "Tittel A–Å", "Skår (høy→lav)"])
-    min_score = f4.selectbox("Mind. relevansskår", ["Alle", "2/5", "3/5", "4/5", "5/5"])
-
-    plat_map = {"YouTube": "youtube", "TikTok": "tiktok", "Instagram": "instagram", "Lokale": "local"}
-    filtered = [
-        v for v in videos
-        if (plat_f == "Alle" or plat_map.get(plat_f) == v.platform)
-        and (status_f == "Alle" or v.status.value == status_f)
-    ]
-    if min_score != "Alle":
-        threshold = int(min_score[0])
-        filtered = [
-            v for v in filtered
-            if analyses.get(v.video_id, {}).get("relevance_score", 0) >= threshold
-        ]
-    if sort_f == "Nyeste":
-        filtered.sort(key=lambda v: v.created_at, reverse=True)
-    elif sort_f == "Eldste":
-        filtered.sort(key=lambda v: v.created_at)
-    elif sort_f == "Tittel A–Å":
-        filtered.sort(key=lambda v: v.title.lower())
-    elif sort_f == "Skår (høy→lav)":
-        filtered.sort(
-            key=lambda v: analyses.get(v.video_id, {}).get("relevance_score", 0),
-            reverse=True,
-        )
-
-    if not filtered:
-        st.info("Ingen videoer treffet filteret. Start med «Send»-fanen.")
-
-    for i in range(0, len(filtered), 3):
-        cols = st.columns(3)
-        for col, v in zip(cols, filtered[i : i + 3]):
-            with col:
-                st.markdown(_card_html(v, analyses.get(v.video_id)), unsafe_allow_html=True)
-                if st.button("Åpne", key=f"open_{v.video_id}", use_container_width=True):
-                    st.session_state["selected_video"] = v.video_id
-                    st.rerun()
-
-    selected_id = st.session_state.get("selected_video")
-    if selected_id:
-        selected = next((v for v in videos if v.video_id == selected_id), None)
-        if selected:
-            st.markdown("---")
-            st.markdown("#### Detaljer")
-            _render_video_detail(selected, analyses.get(selected.video_id))
-            if st.button("✕ Lukk detaljer"):
-                st.session_state.pop("selected_video", None)
-                st.rerun()
-
-
-# ---------------------------------------------------------------------------
-# Page: Søk
-# ---------------------------------------------------------------------------
-def render_search() -> None:
-    st.markdown("### 🔎 Søk i transkripter")
-    st.caption("Nøkkelordsøk (SQLite FTS5) og, hvis du har kjørt `embed`, semantisk søk etter betydning.")
-    query = st.text_input("Søksterm", "", label_visibility="collapsed")
-    if not query.strip():
-        st.info("Skriv et søksterm for å søke i transkriptene.")
-        return
-
-    st.markdown("#### Nøkkelordsøk")
-    hits = search_transcripts(query, limit=50, data_dir=Config.DATA_DIR)
-    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
-    if not hits:
-        st.warning(f"Ingen treff for «{query}».")
-    else:
-        st.write(f"{len(hits)} treff:")
-        for hit in hits:
-            v = videos.get(hit["video_id"])
-            title = v.title if v else hit["video_id"]
-            channel = v.channel if v else ""
-            deep_link = f"https://www.youtube.com/watch?v={hit['video_id']}"
-            st.markdown(f"**{title}** — {channel}\n\n{hit['snippet']}\n\n[Åpne video]({deep_link})")
-
-    from video_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
-
-    if embeddings_configured():
-        st.markdown("#### Semantisk søk (betydning)")
-        try:
-            semantic = search_embeddings(query, data_dir=Config.DATA_DIR, top_k=10)
-        except Exception:  # noqa: BLE001
-            st.error("Semantisk søk feilet — kjør `embed` og sørg for at embeddingsmodellen kjører.")
-            return
-        if not semantic:
-            st.info("Ingen embeddings ennå. Kjør `python src/cli.py embed` først.")
-        else:
-            for r in semantic:
-                v = videos.get(r["video_id"])
-                title = v.title if v else r["video_id"]
-                st.markdown(
-                    f"**{title}** (chunk {r['chunk_index']}, likhet {r['score']:.3f})\n\n{r['snippet']}"
-                )
-
-
-# ---------------------------------------------------------------------------
-# Page: Syntese
-# ---------------------------------------------------------------------------
-def render_synthesis() -> None:
-    st.markdown("### 🧩 Syntese av samlingen")
-    st.caption("Én samlet analyse: felles tema, motsetninger og unik kunnskap fra flere videoer.")
-
-    if st.button("🔄 Generer / oppdater syntese"):
-        with st.spinner("Genererer syntese (modellkall)..."):
-            try:
-                run_synthesis(force=True)
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"Syntesen feilet: {exc}")
-        st.rerun()
-
-    synth = load_synthesis(data_dir=Config.DATA_DIR)
-    if not synth:
-        st.info("Ingen syntese ennå. Klikk «Generer / oppdater» (krever minst to analyserte videoer).")
-        return
-
-    analyzed_now = sorted(a["video_id"] for a in _all_analyses())
-    covered = sorted(synth.get("video_ids", []))
-    if analyzed_now != covered:
-        st.warning("Syntesen er basert på et annet sett av videoer enn nå. Klikk «Generer / oppdater» for å friske opp.")
-
-    st.markdown("#### Samlet tema")
-    st.write(synth.get("theme_no", ""))
-    st.markdown("#### Felles tema (overlapp)")
-    for t in synth.get("shared_topics", []) or ["—"]:
-        st.write(f"- {t}")
-    st.markdown("#### Motsetninger")
-    cons = synth.get("contradictions", [])
-    if cons:
-        for c in cons:
-            st.write(f"- **{c.get('topic')}** ({', '.join(c.get('videos', []))}): {c.get('note')}")
-    else:
-        st.write("Ingen tydelige motsetninger.")
-    st.markdown("#### Unik kunnskap per video")
-    uniq = synth.get("unique_knowledge", [])
-    if uniq:
-        for u in uniq:
-            st.write(f"- **{u.get('video_id')}**: {u.get('knowledge')}")
-    else:
-        st.write("—")
-    st.markdown("#### Mangler (gaps)")
-    gaps = synth.get("gaps", [])
-    if gaps:
-        for g in gaps:
-            st.write(f"- {g}")
-    else:
-        st.write("—")
-    st.markdown("#### Anbefalt sesjonsrekkefølge")
-    order = synth.get("watch_order", [])
-    if order:
-        for w in order:
-            st.write(f"- **{w.get('video_id')}**: {w.get('reason')}")
-    else:
-        st.write("—")
-    if synth.get("recommendation"):
-        st.markdown("#### Anbefaling")
-        st.write(synth["recommendation"])
-    st.caption(f"Generert: {synth.get('created_at', '')} · modell: {synth.get('llm_model', '')} · {len(covered)} videoer")
-
-
-# ---------------------------------------------------------------------------
-# Page: Ranking
-# ---------------------------------------------------------------------------
-def render_ranking() -> None:
-    st.markdown("### 🏆 Ranking")
-    analyses = _all_analyses()
-    if not analyses:
-        st.info("Ingen analyser ennå.")
-        return
-
-    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
-    scored = [
-        (a, (a["practical_score"] * a["relevance_score"]) / (a["redundancy_score"] + 1))
-        for a in analyses
-    ]
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    for rank, (a, score) in enumerate(scored, 1):
-        v = videos.get(a["video_id"])
-        title = v.title if v else a["video_id"]
-        st.write(
-            f"{rank}. **{title}** — verdi: {score:.1f} "
-            f"(praktisk {a['practical_score']}, relevans {a['relevance_score']})"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Page: Eksport
-# ---------------------------------------------------------------------------
-def render_exports() -> None:
-    st.markdown("### 📤 Eksport")
-    videos = get_all_videos(data_dir=Config.DATA_DIR)
-    analyses = _all_analyses()
-    if st.button("Eksportér JSON"):
-        data = {
-            "videos": [
-                {
-                    "video_id": v.video_id,
-                    "title": v.title,
-                    "url": v.url,
-                    "channel": v.channel,
-                    "duration_seconds": v.duration_seconds,
-                    "status": v.status.value,
-                    "platform": v.platform,
-                }
-                for v in videos
-            ],
-            "analyses": analyses,
-        }
-        path = Config.EXPORTS_DIR / "export.json"
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        st.success(f"Eksportert til {path}")
-        st.download_button("Last ned JSON", path.read_text(encoding="utf-8"), "knowledge.json")
-
-    if st.button("Eksportér Markdown"):
-        md_files = export_markdown(data_dir=Config.DATA_DIR)
-        st.success(
-            f"Eksportert {len(md_files)} Markdown-filer til {Config.EXPORTS_DIR / 'markdown'} "
-            "(Obsidian/OpenCode-vennlig, med kildelenker)."
-        )
-
-
-# ---------------------------------------------------------------------------
-def main() -> None:
-    header_mode = "Lokal · Ollama" if Config.USE_OLLAMA else f"API · {Config.LLM_MODEL}"
-    st.markdown(
-        '<div class="vke-header">'
-        '<div class="vke-logo"><span class="vke-logo-badge">🧠</span>VKE</div>'
-        f'<div class="vke-status"><span class="vke-dot"></span>{header_mode}</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    tab_send, tab_lib, tab_search, tab_synth, tab_rank, tab_export = st.tabs(
-        ["📥 Send", "📚 Bibliotek", "🔎 Søk", "🧩 Syntese", "🏆 Ranking", "📤 Eksport"]
-    )
-    with tab_send:
-        render_send()
-    with tab_lib:
-        render_library()
-    with tab_search:
-        render_search()
-    with tab_synth:
-        render_synthesis()
-    with tab_rank:
-        render_ranking()
-    with tab_export:
-        render_exports()
+        _overview()
 
 
 main()
