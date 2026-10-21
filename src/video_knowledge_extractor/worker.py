@@ -13,6 +13,7 @@ transcription stops the job as failed.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import time
 from pathlib import Path
@@ -104,7 +105,26 @@ def resolve_video(url: str, platform: str) -> Video:
         except Exception:  # noqa: BLE001 - best effort only
             pass
         if "/photo/" in final_url:
-            raise JobAborted("Dette er et bildeinnlegg (karusell), ikke en video – ingen lyd å transkribere.")
+            # TikTok photo carousel: no audio, but the slides carry the
+            # content — scrape the item data and treat it as a slideshow.
+            from .slides import SlideshowError, fetch_slideshow
+
+            try:
+                info = fetch_slideshow(final_url)
+            except SlideshowError as exc:
+                raise JobAborted(f"Bildeinnlegg (karusell), men klarte ikke hente bildene: {exc}")
+            m = re.search(r"/photo/(\d+)", final_url)
+            photo_id = (m.group(1) if m else None) or info["item_id"] or "unknown"
+            return Video(
+                video_id=f"photo-{photo_id}",
+                title=info["desc"][:200] or "Bildeinnlegg (karusell)",
+                url=final_url,
+                duration_seconds=0,
+                channel=info["author"] or "Unknown",
+                playlist_order=0,
+                status=VideoStatus.DISCOVERED,
+                platform=platform,
+            )
         raise JobAborted(f"Kunne ikke hente metadata fra {platform} (yt-dlp feilet eller lenken er ikke gyldig)")
     duration = meta.get("duration")
     return Video(
@@ -142,6 +162,7 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
 
     # --- Stage 1: discover -------------------------------------------------
     video = resolve_video(job["url"], job["platform"])
+    is_slideshow = video.video_id.startswith("photo-")
     save_video(video, data_dir=data_dir)
     # Keep the submitter-provided title (e.g. the original upload file name);
     # remote URLs get their title from metadata resolution.
@@ -149,7 +170,10 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
         job_id,
         video_id=video.video_id,
         title=job.get("title") or video.title,
-        status="transcribing" if opts.get("transcribe") else (
+        kind="slides" if is_slideshow else "video",
+        status="transcribing" if (
+            opts.get("transcribe") or (is_slideshow and opts.get("analyze"))
+        ) else (
             "analyzing" if opts.get("analyze") else "done"
         ),
         progress=15,
@@ -159,8 +183,29 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
         update_job(job_id, status="done", progress=100, note=note or "Ingen trinn valgt", data_dir=data_dir)
         return
 
-    # --- Stage 2: transcript ----------------------------------------------
-    if opts.get("transcribe"):
+    # --- Stage 2: transcript (slides for photo posts) ----------------------
+    if is_slideshow and (opts.get("transcribe") or opts.get("analyze")):
+        update_job(job_id, status="transcribing", progress=15, data_dir=data_dir)
+        from .slides import process_slideshow
+
+        # Slideshows: OCR + vision are the whole point (no audio), and the
+        # vision endpoint is free (NTNU), so vision always runs for photos.
+        transcript, slide_note = process_slideshow(
+            video, job["url"], use_vision=True, data_dir=data_dir
+        )
+        if slide_note:
+            note = (note + "; " if note else "") + slide_note
+        if not transcript.segments:
+            update_job(
+                job_id,
+                status="done",
+                progress=100,
+                note=(note + "; " if note else "") + "Fant ingen tekst i bildene – kan ikke analysere",
+                data_dir=data_dir,
+            )
+            console.print(f"  [yellow]{video.video_id}: no slide text, job finished[/yellow]")
+            return
+    elif opts.get("transcribe"):
         update_job(job_id, status="transcribing", progress=15, data_dir=data_dir)
         _stage_transcribe(video, data_dir)
         transcript = get_transcript(video.video_id, data_dir=data_dir)
@@ -178,7 +223,8 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
             return
 
     # --- Stage 3: on-screen text (OCR) -- optional, non-fatal ---------------
-    if opts.get("ocr"):
+    # Slideshows already capture on-screen text on the slides stage above.
+    if not is_slideshow and opts.get("ocr"):
         update_job(job_id, status="ocr", progress=45, data_dir=data_dir)
         try:
             from .visual import process_on_screen_text
@@ -190,7 +236,8 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
             note = f"OCR tilgjengelig: {exc}"
 
     # --- Stage 4: vision frame descriptions -- optional, non-fatal ----------
-    if opts.get("vision"):
+    # Slideshows already run vision on the slides stage above.
+    if not is_slideshow and opts.get("vision"):
         update_job(job_id, status="vision", progress=60, data_dir=data_dir)
         try:
             from .vision import process_frame_descriptions

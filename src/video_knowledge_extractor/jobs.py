@@ -65,12 +65,17 @@ def init_jobs_table(data_dir: Path = Path("data")) -> None:
                 note TEXT,
                 error_message TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'video'
             )
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at)")
+        # Migrate databases created before the kind column existed.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        if "kind" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'video'")
         conn.commit()
 
 
@@ -185,6 +190,7 @@ def update_job(
     title: Optional[str] = None,
     note: Optional[str] = None,
     error_message: Optional[str] = None,
+    kind: Optional[str] = None,
     data_dir: Path = Path("data"),
 ) -> None:
     if status is not None and status not in JOB_STAGES:
@@ -209,6 +215,11 @@ def update_job(
     if error_message is not None:
         sets.append("error_message = ?")
         values.append(error_message)
+    if kind is not None:
+        if kind not in ("video", "slides"):
+            raise ValueError(f"unknown job kind: {kind}")
+        sets.append("kind = ?")
+        values.append(kind)
     values.append(job_id)
     with get_connection(data_dir) as conn:
         conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE job_id = ?", values)
@@ -234,4 +245,5 @@ def _row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "error_message": row["error_message"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "kind": row["kind"],
     }

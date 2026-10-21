@@ -57,6 +57,11 @@ def _b64_frame(frame_path: Path) -> str:
     return base64.b64encode(Path(frame_path).read_bytes()).decode("ascii")
 
 
+def _image_mime(frame_path: Path) -> str:
+    """MIME type from the file extension (frames are usually PNG, slides JPEG)."""
+    return "image/jpeg" if Path(frame_path).suffix.lower() in (".jpg", ".jpeg") else "image/png"
+
+
 def _vision_ollama(frame_path: Path, prompt: str) -> str:
     if not Config.OLLAMA_URL:
         raise RuntimeError(
@@ -93,7 +98,7 @@ def _vision_api(frame_path: Path, prompt: str) -> str:
                     {"type": "text", "text": prompt},
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{_b64_frame(frame_path)}"},
+                        "image_url": {"url": f"data:{_image_mime(frame_path)};base64,{_b64_frame(frame_path)}"},
                     },
                 ],
             }

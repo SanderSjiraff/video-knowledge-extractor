@@ -138,8 +138,9 @@ def _job_stages_html(job: dict) -> str:
     status = job.get("status", "queued")
     has_transcribe = opts.get("transcribe", True)
     has_embed = opts.get("embed", True)
+    is_slides = job.get("kind") == "slides"
 
-    stage_order = ["Oppdaget", "Transkribert", "Analysert", "Indeksert"]
+    stage_order = ["Oppdaget", "Bilder" if is_slides else "Transkribert", "Analysert", "Indeksert"]
     # Map status to how many stages are done, and what (if anything) is running.
     stage_index = {
         "queued": (-1, None),
@@ -156,7 +157,11 @@ def _job_stages_html(job: dict) -> str:
 
     labels_run = {
         0: "Oppdager…",
-        1: f"Transkriberer… {job.get('progress', 0)}%",
+        1: (
+            f"Behandler bilder… {job.get('progress', 0)}%"
+            if is_slides
+            else f"Transkriberer… {job.get('progress', 0)}%"
+        ),
         "ocr": "OCR på skjerm…",
         "vision": "Beskriver bilder…",
         2: "Analyserer…",

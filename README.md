@@ -86,6 +86,8 @@ starter alt med én kommando: API-serveren, worker-en og dashboardet (Streamlit,
 
 Lokale filer (opplasting/bot) transkriberes direkte med Whisper uten nedlasting. Jobber som feiler får feilmeldingen lagret i køen og på videoen; OCR/visjon/embeddings-feil er ikke fatale og logges som merknad. API-et er et lokalt, enkeltbruker-verktøy i denne fasen (ingen auth ennå).
 
+**TikTok-slideshow (bildekaruseller):** lenker på formen `…/photo/<id>` (også `vm.tiktok.com`-korthenker) behandles automatisk: bildene lastes ned til `data/slides/<id>/`, hvert bilde OCR-leses og beskrives av visjonsmodellen (altid på for karuseller – det er hele innholdet), og det lages et syntetisk «transkript» av tekstene slik at analyse, søk og embeddings fungerer som for vanlige videoer. Instagram-bildeinnlegg støttes foreløpig ikke.
+
 **Se dashboardet fra telefonen (valgfritt):** dashboardet kjører lokalt på `http://localhost:8501`. For å åpne det i mobilens nettleser kan du bruke en gratis Cloudflare-tunnel:
 
 ```powershell
