@@ -95,7 +95,9 @@ winget install cloudflare.cloudflared
 cloudflared tunnel --url http://localhost:8501
 ```
 
-Tunnelen skriver ut en `https://….trycloudflare.com`-URL – åpne den i telefonen. Quick-tunnel-URLen byttes hver gang tunnelen starter; en gratis Cloudflare-konto gir fast URL (named tunnel). Botten trenger ingen tunnel – den bruker long polling utgående.
+Tunnelen skriver ut en `https://….trycloudflare.com`-URL – åpne den i telefonen. Quick-tunnel-URLen byttes hver gang tunnelen starter; for fast URL trenger du et domene i Cloudflare-kontoen din (named tunnel, `cloudflared tunnel login` + `route dns`). Botten trenger ingen tunnel – den bruker long polling utgående.
+
+**Auto-start (Windows):** `start-platform.bat` starter API + worker + dashboard + bot + quick-tunnel. En snopp i brukeren sin oppstartmappe («VKE Platform») kjører den automatisk ved pålogging, slik at hele plattformen (og tunnel-URLen) kommer tilbake etter omstart – med en ny, tilfeldig quick-tunnel-URL.
 
 ## Bruk (CLI)
 
