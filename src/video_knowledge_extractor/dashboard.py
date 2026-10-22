@@ -559,6 +559,14 @@ h1 {{
     color: #8b949e; font-size: 11px; padding: 2px 9px; border-radius: 999px;
     margin: 0 6px 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }}
+.eta-box {{
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(56,139,253,.08); border: 1px solid rgba(56,139,253,.40);
+    border-radius: 10px; padding: 8px 14px; margin-bottom: 12px;
+}}
+.eta-ico {{ font-size: 17px; line-height: 1.2; }}
+.eta-lbl {{ color: #8b949e; font-size: 11px; }}
+.eta-val {{ color: #e6edf3; font-size: 14px; font-weight: 700; }}
 .qlast {{ font-size: 12px; color: #8b949e; flex-shrink: 0; width: 92px; text-align: right; }}
 </style>
 """,
@@ -812,6 +820,7 @@ def _overview():
                     st.checkbox("OCR (tekst på skjerm)", value=False, key="ov_r")
 
     with right:
+        _eta_box()
         with st.container(border=True):
             st.markdown('<div class="panel-title">Behandlingskø</div>', unsafe_allow_html=True)
             st.markdown(
@@ -842,8 +851,7 @@ def _overview():
                 st.markdown(
                     f'<div class="qsub" style="padding:2px 2px 4px;">'
                     f'<b style="color:#e6edf3;">{n_queued}</b> venter &middot; '
-                    f'<b style="color:#e6edf3;">{n_running}</b> behandles &middot; '
-                    f'ETA: {_queue_eta_text(active)}</div>',
+                    f'<b style="color:#e6edf3;">{n_running}</b> behandles</div>',
                     unsafe_allow_html=True,
                 )
                 visible = active[:5]
@@ -1034,9 +1042,33 @@ def _worker_status_text(active: list[dict]) -> str:
 def _status_line(active: list[dict]) -> str:
     return (
         f'<div class="qsub" style="padding:4px 2px 0;">'
-        f'Worker: {_worker_status_text(active)} &middot; '
-        f'Kø-ETA: {_queue_eta_text(active)}</div>'
+        f'Worker: {_worker_status_text(active)}</div>'
     )
+
+
+def _eta_box_html(active: list[dict]) -> str:
+    """Compact standalone box with the remaining queue time ('' when idle)."""
+    if not active:
+        return ""
+    n_queued = sum(1 for j in active if j["status"] == "queued")
+    val = _queue_eta_text(active) if n_queued else "Nesten ferdig — siste jobb er i gang"
+    return (
+        f'<div class="eta-box">'
+        f'<div class="eta-ico">⏱</div>'
+        f'<div><div class="eta-lbl">Gjenstående tid i kø</div>'
+        f'<div class="eta-val">{val}</div></div>'
+        f'</div>'
+    )
+
+
+def _eta_box():
+    """The ETA box as its own auto-refreshing fragment (front page)."""
+    @st.fragment(run_every="20s")
+    def _live():
+        html = _eta_box_html(list_active_jobs(data_dir=Config.DATA_DIR))
+        if html:
+            st.markdown(html, unsafe_allow_html=True)
+    _live()
 
 
 def _queue():
@@ -1064,6 +1096,9 @@ def _queue():
             </div>''',
             unsafe_allow_html=True,
         )
+        eta_html = _eta_box_html(active)
+        if eta_html:
+            st.markdown(eta_html, unsafe_allow_html=True)
         st.markdown(_status_line(active), unsafe_allow_html=True)
 
         with st.container(border=True):
@@ -1428,27 +1463,45 @@ def _temakart():
         '<span class="count-pill">lokalt, uten LLM</span></div>',
         unsafe_allow_html=True,
     )
-    for name, vids in topics:
+    for ti, (name, vids) in enumerate(topics):
         with st.container(border=True):
             st.markdown(
                 f'<div class="panel-title">{name} '
                 f'<span class="count-pill">{len(vids)} videoer</span></div>',
                 unsafe_allow_html=True,
             )
-            vchips = []
-            for r in vids:
-                v = videos.get(r.video_id)
-                icon = _plat_icon(v.platform) if v else ""
-                vchips.append(
-                    f'<span class="tchip" title="{r.title}">{icon}{r.title}</span>'
-                )
-            st.markdown("".join(vchips), unsafe_allow_html=True)
+            # Click a video to open its overview + analysis below.
+            for i in range(0, len(vids), 4):
+                cols = st.columns(4, gap="small")
+                for c, r in zip(cols, vids[i : i + 4]):
+                    with c:
+                        label = r.title if len(r.title) <= 30 else r.title[:27] + "…"
+                        if st.button(
+                            label,
+                            key=f"tm{ti}_{r.video_id}",
+                            type="tertiary",
+                            use_container_width=True,
+                            help=r.title,
+                        ):
+                            st.session_state[f"d_{r.video_id}"] = True
+                            st.rerun()
 
 
 def _synthesis():
     st.markdown("<h1>Syntese</h1>", unsafe_allow_html=True)
     st.markdown("<p class='lead'>Samlet analyse av hele biblioteket ditt.</p>", unsafe_allow_html=True)
     _temakart()
+
+    # Video clicked in the topic map → show its overview + analysis here.
+    analyses_map = _load_analyses()
+    for v in get_all_videos(data_dir=Config.DATA_DIR):
+        if st.session_state.get(f"d_{v.video_id}"):
+            _detail(v, analyses_map.get(v.video_id))
+            if st.button("✕ Lukk analyse", key=f"cl_s_{v.video_id}"):
+                st.session_state.pop(f"d_{v.video_id}", None)
+                st.rerun()
+            break
+
     if st.button("Generer / oppdater syntese", type="primary"):
         with st.spinner("Genererer syntese..."):
             try:
