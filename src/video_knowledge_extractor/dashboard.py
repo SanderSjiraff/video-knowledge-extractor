@@ -36,6 +36,7 @@ from video_knowledge_extractor.jobs import (
     list_jobs,
     pin_job,
     retry_job,
+    unpin_job,
 )
 from video_knowledge_extractor.models import VideoStatus
 from video_knowledge_extractor.notes import export_markdown
@@ -944,6 +945,8 @@ def _job_row(j, show_progress, pos=None, show_date=True):
     else:
         prog_html = '<div class="qprog" style="background:transparent;"></div>'
     sub = _plat_label(j.get("platform") or "youtube")
+    if j.get("pinned") and j["status"] == "queued":
+        sub += ' · <span style="color:#58a6ff;">📌 prioritert</span>'
     err = (j.get("error_message") or "")[:60]
     if j["status"] == "failed" and err:
         sub += f" · {err}"
@@ -1067,7 +1070,7 @@ def _queue():
             st.markdown('<div class="panel-title">Aktiv kø</div>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="panel-desc">Nye videoer behandles nederst opp i rekkefølgen (først inn – først ut). '
-                '<b>⬆</b> prioriter · <b>✕</b> avbryt · <b>↻</b> prøv igjen.</div>',
+                '<b>⬆</b> prioriter · <b>⬇</b> dra ned · <b>✕</b> avbryt · <b>↻</b> prøv igjen.</div>',
                 unsafe_allow_html=True,
             )
             if not active:
@@ -1091,9 +1094,14 @@ def _queue():
                         if j["status"] == "queued":
                             ca, cb = st.columns(2)
                             with ca:
-                                if st.button("⬆", key=f"pin_{j['job_id']}", type="tertiary", help="Øverst i køen"):
-                                    pin_job(j["job_id"], data_dir=Config.DATA_DIR)
-                                    st.rerun()
+                                if j.get("pinned"):
+                                    if st.button("⬇", key=f"pin_{j['job_id']}", type="tertiary", help="Dra ned igjen i køen (FIFO)"):
+                                        unpin_job(j["job_id"], data_dir=Config.DATA_DIR)
+                                        st.rerun()
+                                else:
+                                    if st.button("⬆", key=f"pin_{j['job_id']}", type="tertiary", help="Øverst i køen"):
+                                        pin_job(j["job_id"], data_dir=Config.DATA_DIR)
+                                        st.rerun()
                             with cb:
                                 if st.button("✕", key=f"cx_{j['job_id']}", type="tertiary", help="Avbryt jobben"):
                                     cancel_job(j["job_id"], data_dir=Config.DATA_DIR)
@@ -1388,8 +1396,8 @@ def _search():
 # SYNTHESIS
 # ─────────────────────────────────────────────────────────────────
 def _temakart():
-    """Topic map: cluster the analyzed videos by shared techniques/tools."""
-    from video_knowledge_extractor.cross_video import cluster_videos
+    """Topic map: recurring topics from video titles + techniques (local)."""
+    from video_knowledge_extractor.cross_video import topic_map
     from video_knowledge_extractor.models import VideoAnalysis
 
     analyses = _load_analyses()
@@ -1409,9 +1417,10 @@ def _temakart():
         )
         for vid, a in analyses.items()
     ]
-    clusters = cluster_videos(objs, {vid: (videos[vid].title if vid in videos else vid) for vid in analyses})
-    clusters.sort(key=lambda c: -len(c.videos))
-    if not clusters:
+    topics = topic_map(
+        objs, {vid: (videos[vid].title if vid in videos else vid) for vid in analyses}
+    )
+    if not topics:
         return
 
     st.markdown(
@@ -1419,20 +1428,15 @@ def _temakart():
         '<span class="count-pill">lokalt, uten LLM</span></div>',
         unsafe_allow_html=True,
     )
-    for c in clusters:
+    for name, vids in topics:
         with st.container(border=True):
             st.markdown(
-                f'<div class="panel-title">{c.name} '
-                f'<span class="count-pill">{len(c.videos)} videoer</span></div>',
+                f'<div class="panel-title">{name} '
+                f'<span class="count-pill">{len(vids)} videoer</span></div>',
                 unsafe_allow_html=True,
             )
-            if c.overlapping_concepts:
-                chips = "".join(
-                    f'<span class="tchip-c">{x.title()}</span>' for x in c.overlapping_concepts
-                )
-                st.markdown(f'<div style="margin-bottom:6px;">{chips}</div>', unsafe_allow_html=True)
             vchips = []
-            for r in c.videos:
+            for r in vids:
                 v = videos.get(r.video_id)
                 icon = _plat_icon(v.platform) if v else ""
                 vchips.append(

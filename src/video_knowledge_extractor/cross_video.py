@@ -104,6 +104,108 @@ def cluster_videos(analyses: list[VideoAnalysis], video_titles: dict[str, str]) 
     return clusters
 
 
+# Generic words (EN + NO) that carry no topic signal — used by topic_map().
+_STOPWORDS = frozenset(
+    """
+    a an the and or but to of in on for with how why what is are was were be
+    been being this that these those it its as at by from you your my our
+    their they them we us i me he she his her not no yes do does did can
+    could will would should just so if then than too very really there here
+    when where who whom which all any some such only own same out about into
+    over after before between up down off again further once new top best
+    more most other another one two three day days making make made using use
+    used get got go goes going see watch end start check thing things way lot
+    much many let like know think really actually sure bit little bit
+    og i er det til for med paa pa en et at sa saas kan ikke var har som den
+    de du vi han hun dette disse din ditt deres alle noen mye mer mest hvor
+    hva hvilken hvordan hvorfor naar naar video videoer ny nye god gode ting
+    masse faa faaer kom komme gaar gaarer
+    """.split()
+)
+
+_ACRONYMS = {
+    "ai": "AI",
+    "ar": "AR",
+    "api": "API",
+    "vr": "VR",
+    "rag": "RAG",
+    "llm": "LLM",
+    "git": "Git",
+    "gpt": "GPT",
+}
+
+
+def topic_map(
+    analyses: list[VideoAnalysis],
+    video_titles: dict[str, str],
+    max_topics: int = 8,
+    min_videos: int = 3,
+) -> list[tuple[str, list[VideoCrossRef]]]:
+    """Multi-label topic overview for the dashboard topic map.
+
+    Unlike :func:`cluster_videos` (exclusive, techniques-only), this also
+    mines the video titles for recurring topic words, so each video can
+    appear under several themes and there is no catch-all bucket.  Purely
+    local — no LLM involved.
+
+    Returns up to ``max_topics`` ``(topic, [VideoCrossRef])`` pairs, most
+    frequent first, only including topics seen in at least ``min_videos``
+    videos.
+    """
+    import re
+    from collections import Counter
+
+    refs: dict[str, VideoCrossRef] = {}
+    doc_tokens: dict[str, set[str]] = {}
+    for a in analyses:
+        ref = VideoCrossRef(
+            video_id=a.video_id,
+            title=video_titles.get(a.video_id, a.video_id),
+            relevance_score=a.relevance_score,
+            practical_score=a.practical_score,
+            techniques=a.techniques_tools,
+        )
+        refs[a.video_id] = ref
+        tokens: set[str] = set()
+        for t in a.techniques_tools:
+            t = str(t).lower().strip()
+            if t:
+                tokens.add(t)
+        for w in re.split(r"[^a-z0-9]+", str(video_titles.get(a.video_id, "")).lower()):
+            if len(w) >= 3 and not w.isdigit() and w not in _STOPWORDS:
+                tokens.add(w)
+        doc_tokens[a.video_id] = tokens
+
+    counts: Counter[str] = Counter()
+    for tokens in doc_tokens.values():
+        counts.update(tokens)
+
+    # Merge simple plurals into their singular when both occur ("Agents"
+    # -> "Agent"), so one theme is not split in two.
+    for tok in [t for t in counts if t.endswith("s") and len(t) > 3]:
+        sing = tok[:-1]
+        if counts.get(sing, 0) >= 2:
+            counts[sing] += counts[tok]
+            del counts[tok]
+
+    topics: list[tuple[str, list[VideoCrossRef]]] = []
+    for tok, n in counts.most_common():
+        if n < min_videos:
+            break
+        # Match the plural spelling in titles as well ("agent" <-> "agents").
+        plural = tok + "s"
+        vids = [
+            refs[v]
+            for v, tokens in doc_tokens.items()
+            if tok in tokens or plural in tokens
+        ]
+        name = _ACRONYMS.get(tok, tok.title())
+        topics.append((name, vids))
+        if len(topics) >= max_topics:
+            break
+    return topics
+
+
 def rank_videos_by_value(analyses: list[VideoAnalysis]) -> list[tuple[str, float]]:
     """Rank videos by composite practical value score."""
     scored: list[tuple[str, float]] = []

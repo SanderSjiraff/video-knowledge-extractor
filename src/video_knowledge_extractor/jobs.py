@@ -228,6 +228,20 @@ def pin_job(job_id: str, data_dir: Path = Path("data")) -> bool:
     return cur.rowcount > 0
 
 
+def unpin_job(job_id: str, data_dir: Path = Path("data")) -> bool:
+    """Drag a pinned queued job back down to its normal (FIFO) position."""
+    init_jobs_table(data_dir)
+    now = _now()
+    with get_connection(data_dir) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET pinned = 0, updated_at = ? "
+            "WHERE job_id = ? AND status = 'queued' AND pinned = 1",
+            (now, job_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def claim_next_job(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
     """Atomically claim the oldest queued job (status queued -> discovering).
 
@@ -322,4 +336,5 @@ def _row_to_job(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "kind": row["kind"],
+        "pinned": bool(row["pinned"]),
     }
