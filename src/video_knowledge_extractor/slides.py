@@ -193,7 +193,15 @@ def scrape_tiktok_video(url: str) -> dict[str, Any]:
     Fallback for when yt-dlp's TikTok extractor fails (bot-check responses):
     the web page still embeds the full item data, including a direct mp4
     play address that can be downloaded without yt-dlp.
+
+    Canonical URLs without the author handle (``tiktok.com/video/<id>`` and
+    the 404 URLs TikTok redirects them to) carry no embedded data; the
+    empty-username form ``tiktok.com/@/video/<id>`` serves the same item
+    with the full data, so normalize to that when no handle is present.
     """
+    m = re.search(r"/video/(\d+)", url)
+    if m and not re.search(r"/@[A-Za-z0-9._-]+/video/\d+", url):
+        url = f"https://www.tiktok.com/@/video/{m.group(1)}"
     final_url = resolve_photo_url(url)
     if "/video/" not in final_url:
         raise SlideshowError("Lenken peker ikke på et TikTok-videoinnlegg")
