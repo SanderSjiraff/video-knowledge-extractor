@@ -73,6 +73,7 @@ def _fmt_job_line(job: dict) -> str:
         "embedding": "🔢",
         "done": "✅",
         "failed": "❌",
+        "cancelled": "✖️",
     }
     icon = status_icons.get(job["status"], "•")
     title = job["title"] or job["url"]
@@ -123,7 +124,7 @@ def build_application():
             f"• Total varighet: {stats['total_duration_formatted']}",
         ]
         jobs = list_jobs(limit=8, data_dir=Config.DATA_DIR)
-        active = [j for j in jobs if j["status"] not in ("done", "failed")]
+        active = [j for j in jobs if j["status"] not in ("done", "failed", "cancelled")]
         if active:
             lines.append("")
             lines.append("Kø:")

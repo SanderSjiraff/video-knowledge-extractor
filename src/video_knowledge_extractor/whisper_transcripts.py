@@ -108,7 +108,13 @@ def _download_audio(video: Video, audio_dir: Path) -> Path:
     if local.exists():
         return local
     audio_dir.mkdir(parents=True, exist_ok=True)
-    preferred = audio_dir / f"{video.video_id}.m4a"
+    # TikTok/Instagram: download the full (low-res) video instead of
+    # audio-only.  Whisper decodes mp4 fine, and the same file later feeds
+    # the thumbnail and the no-speech screen capture — one download, three
+    # uses.  YouTube keeps the m4a-only path (ytimg provides thumbnails).
+    full_video = video.platform in ("tiktok", "instagram")
+    ext = "mp4" if full_video else "m4a"
+    preferred = audio_dir / f"{video.video_id}.{ext}"
     if preferred.exists() and preferred.stat().st_size > 0:
         return preferred
     existing = list(audio_dir.glob(f"{video.video_id}.*"))
@@ -118,7 +124,11 @@ def _download_audio(video: Video, audio_dir: Path) -> Path:
     import yt_dlp
 
     ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": (
+            "best[height<=720][ext=mp4]/best[ext=mp4]/best[height<=720]/best"
+            if full_video
+            else "bestaudio[ext=m4a]/bestaudio/best"
+        ),
         "outtmpl": str(preferred),
         "quiet": True,
         "noprogress": True,

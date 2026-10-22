@@ -5,6 +5,7 @@ Streamlit frontend
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import sys
@@ -28,10 +29,13 @@ from video_knowledge_extractor.db import (
 )
 from video_knowledge_extractor.discovery import detect_platform
 from video_knowledge_extractor.jobs import (
+    cancel_job,
     count_finished_jobs,
     enqueue_job,
     list_active_jobs,
     list_jobs,
+    pin_job,
+    retry_job,
 )
 from video_knowledge_extractor.models import VideoStatus
 from video_knowledge_extractor.notes import export_markdown
@@ -80,6 +84,7 @@ STAGE_LABELS = {
     "embedding": "Indekserer",
     "done": "Ferdig",
     "failed": "Feilet",
+    "cancelled": "Avbrutt",
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -541,6 +546,18 @@ h1 {{
     background: #21262d; border-radius: 2px; overflow: hidden;
 }}
 .oqrow .oqprog > div {{ height: 100%; background: #388bfd; }}
+.tchip {{
+    display: inline-block; max-width: 230px;
+    background: rgba(56,139,253,.10); border: 1px solid rgba(56,139,253,.35);
+    color: #c9d1d9; font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    margin: 0 6px 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
+.tchip-c {{
+    display: inline-block; max-width: 180px;
+    background: rgba(139,148,158,.10); border: 1px solid rgba(139,148,158,.30);
+    color: #8b949e; font-size: 11px; padding: 2px 9px; border-radius: 999px;
+    margin: 0 6px 6px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
 .qlast {{ font-size: 12px; color: #8b949e; flex-shrink: 0; width: 92px; text-align: right; }}
 </style>
 """,
@@ -621,6 +638,11 @@ def _fmt_date(dt):
 
 
 def _thumb_html(v, ph_text="VIDEO"):
+    # Local thumbnail (extracted by the worker) beats the remote placeholder.
+    t = Config.THUMBS_DIR / f"{v.video_id}.jpg"
+    if t.exists() and t.stat().st_size > 0:
+        b64 = base64.b64encode(t.read_bytes()).decode("ascii")
+        return f'<img class="vthumb" src="data:image/jpeg;base64,{b64}" alt="">'
     if v.platform == "youtube":
         return (
             f'<img class="vthumb" src="https://i.ytimg.com/vi/{v.video_id}/mqdefault.jpg" '
@@ -795,29 +817,32 @@ def _overview():
                 '<div class="panel-desc">Øverst i lista behandles først (først inn – først ut).</div>',
                 unsafe_allow_html=True,
             )
-            active = list_active_jobs(data_dir=Config.DATA_DIR)
-            if not active:
-                st.markdown(
-                    """<div class="q-empty">
-                        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
-                            <circle cx="12" cy="12" r="10"/>
-                            <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                        <div class="qe-title">Alt er ferdig</div>
-                        <div class="qe-desc">Ingen videoer venter på analyse.</div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-                if st.button("Se hele køen →", key="q1", type="secondary"):
-                    st.session_state.page = "ko"
-                    st.rerun()
-            else:
+            @st.fragment(run_every="20s")
+            def _ov_live():
+                active = list_active_jobs(data_dir=Config.DATA_DIR)
+                if not active:
+                    st.markdown(
+                        """<div class="q-empty">
+                            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <div class="qe-title">Alt er ferdig</div>
+                            <div class="qe-desc">Ingen videoer venter på analyse.</div>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Se hele køen →", key="q1", type="secondary"):
+                        st.session_state.page = "ko"
+                        st.rerun()
+                    return
                 n_queued = sum(1 for j in active if j["status"] == "queued")
                 n_running = len(active) - n_queued
                 st.markdown(
-                    f'<div class="qsub" style="padding:2px 2px 8px;">'
+                    f'<div class="qsub" style="padding:2px 2px 4px;">'
                     f'<b style="color:#e6edf3;">{n_queued}</b> venter &middot; '
-                    f'<b style="color:#e6edf3;">{n_running}</b> behandles</div>',
+                    f'<b style="color:#e6edf3;">{n_running}</b> behandles &middot; '
+                    f'ETA: {_queue_eta_text(active)}</div>',
                     unsafe_allow_html=True,
                 )
                 visible = active[:5]
@@ -829,9 +854,12 @@ def _overview():
                         f'+ {len(active) - len(visible)} flere i kø</div>',
                         unsafe_allow_html=True,
                     )
+                st.markdown(_status_line(active), unsafe_allow_html=True)
                 if st.button("Se hele køen →", key="q2", type="secondary", use_container_width=True):
                     st.session_state.page = "ko"
                     st.rerun()
+
+            _ov_live()
 
     # Recent videos
     videos = get_all_videos(data_dir=Config.DATA_DIR)
@@ -906,6 +934,8 @@ def _job_row(j, show_progress, pos=None, show_date=True):
         badge = '<span class="badge-status status-done"><span class="status-dot" style="background:#3fb950;"></span>Ferdig</span>'
     elif j["status"] == "failed":
         badge = '<span class="badge-status status-err"><span class="status-dot" style="background:#f85149;"></span>Feilet</span>'
+    elif j["status"] == "cancelled":
+        badge = '<span class="badge-status status-wait"><span class="status-dot" style="background:#8b949e;"></span>Avbrutt</span>'
     else:
         badge = f'<span class="badge-status status-run"><span class="status-dot" style="background:#58a6ff;"></span>{label}</span>'
     if show_progress:
@@ -948,71 +978,154 @@ def _ov_queue_row(j, pos):
     )
 
 
+def _fmt_eta(seconds: float) -> str:
+    if seconds < 90:
+        return "ca. 1–2 min"
+    minutes = int(round(seconds / 60))
+    if minutes < 60:
+        return f"ca. {minutes} min"
+    hours = int(minutes // 60)
+    return f"ca. {hours} t {minutes % 60:02d} min"
+
+
+def _queue_eta_text(active: list[dict]) -> str:
+    """Rough ETA: average done-job duration × number of queued jobs."""
+    queued = sum(1 for j in active if j["status"] == "queued")
+    if not queued:
+        return "—"
+    with get_connection(Config.DATA_DIR) as conn:
+        rows = conn.execute(
+            "SELECT created_at, updated_at FROM jobs WHERE status='done' "
+            "ORDER BY updated_at DESC LIMIT 20"
+        ).fetchall()
+    durs = []
+    for c, u in rows:
+        try:
+            d = (datetime.fromisoformat(u) - datetime.fromisoformat(c)).total_seconds()
+        except Exception:
+            continue
+        if 0 < d < 6 * 3600:
+            durs.append(d)
+    if not durs:
+        return "ukjent"
+    return _fmt_eta((sum(durs) / len(durs)) * queued)
+
+
+def _worker_status_text(active: list[dict]) -> str:
+    """Heuristic worker liveness based on job update timestamps."""
+    if not active:
+        return "ledig (køen er tom)"
+    running = [j for j in active if j["status"] != "queued"]
+    if not running:
+        return "venter på worker (ingen jobb i gang)"
+    try:
+        last = max(datetime.fromisoformat(j["updated_at"]) for j in running)
+        age = (datetime.utcnow() - last).total_seconds()
+    except Exception:
+        return "aktiv"
+    if age > 15 * 60:
+        return f"⚠️ muligens død (sist aktiv {int(age // 60)} min siden)"
+    return f"aktiv (sist aktiv {max(1, int(age // 60))} min siden)"
+
+
+def _status_line(active: list[dict]) -> str:
+    return (
+        f'<div class="qsub" style="padding:4px 2px 0;">'
+        f'Worker: {_worker_status_text(active)} &middot; '
+        f'Kø-ETA: {_queue_eta_text(active)}</div>'
+    )
+
+
 def _queue():
     st.markdown("<h1>Kø</h1>", unsafe_allow_html=True)
     st.markdown("<p class='lead'>Videoer som venter på eller er under analyse.</p>", unsafe_allow_html=True)
 
-    active = list_active_jobs(data_dir=Config.DATA_DIR)  # FIFO: eldste først
-    finished = [
-        j for j in list_jobs(limit=100, data_dir=Config.DATA_DIR)
-        if j["status"] in ("done", "failed")
-    ][:10]
+    @st.fragment(run_every="20s")
+    def _live():
+        active = list_active_jobs(data_dir=Config.DATA_DIR)  # FIFO: eldste først
+        finished = [
+            j for j in list_jobs(limit=100, data_dir=Config.DATA_DIR)
+            if j["status"] in ("done", "failed")
+        ][:10]
 
-    n_queued = sum(1 for j in active if j["status"] == "queued")
-    n_running = len(active) - n_queued
-    # Count every terminal job in the DB — the `finished` list above is
-    # capped at 10 (it feeds the "Sist behandlet" panel below).
-    n_finished = count_finished_jobs(data_dir=Config.DATA_DIR)
-    st.markdown(
-        f'''<div class="stats-bar">
-            <span class="stat"><b>{n_queued}</b> venter i kø</span><span class="sep"></span>
-            <span class="stat"><b>{n_running}</b> behandles nå</span><span class="sep"></span>
-            <span class="stat"><b>{n_finished}</b> behandlet</span>
-        </div>''',
-        unsafe_allow_html=True,
-    )
-
-    with st.container(border=True):
-        st.markdown('<div class="panel-title">Aktiv kø</div>', unsafe_allow_html=True)
+        n_queued = sum(1 for j in active if j["status"] == "queued")
+        n_running = len(active) - n_queued
+        # Count every terminal job in the DB — the `finished` list above is
+        # capped at 10 (it feeds the "Sist behandlet" panel below).
+        n_finished = count_finished_jobs(data_dir=Config.DATA_DIR)
         st.markdown(
-            '<div class="panel-desc">Nye videoer behandles nederst opp i rekkefølgen (først inn – først ut).</div>',
+            f'''<div class="stats-bar">
+                <span class="stat"><b>{n_queued}</b> venter i kø</span><span class="sep"></span>
+                <span class="stat"><b>{n_running}</b> behandles nå</span><span class="sep"></span>
+                <span class="stat"><b>{n_finished}</b> behandlet</span>
+            </div>''',
             unsafe_allow_html=True,
         )
-        if not active:
+        st.markdown(_status_line(active), unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown('<div class="panel-title">Aktiv kø</div>', unsafe_allow_html=True)
             st.markdown(
-                """<div class="q-empty">
-                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
-                        <circle cx="12" cy="12" r="10"/>
-                        <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    <div class="qe-title">Køen er tom</div>
-                    <div class="qe-desc">Ingen videoer venter på analyse.</div>
-                </div>""",
+                '<div class="panel-desc">Nye videoer behandles nederst opp i rekkefølgen (først inn – først ut). '
+                '<b>⬆</b> prioriter · <b>✕</b> avbryt · <b>↻</b> prøv igjen.</div>',
                 unsafe_allow_html=True,
             )
-        else:
-            for j in active:
-                st.markdown(_job_row(j, show_progress=True), unsafe_allow_html=True)
+            if not active:
+                st.markdown(
+                    """<div class="q-empty">
+                        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="m8.5 12.5 2.5 2.5 5-5.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <div class="qe-title">Køen er tom</div>
+                        <div class="qe-desc">Ingen videoer venter på analyse.</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+            else:
+                for j in active:
+                    rc1, rc2 = st.columns([23, 1], gap="small")
+                    with rc1:
+                        st.markdown(_job_row(j, show_progress=True), unsafe_allow_html=True)
+                    with rc2:
+                        if j["status"] == "queued":
+                            ca, cb = st.columns(2)
+                            with ca:
+                                if st.button("⬆", key=f"pin_{j['job_id']}", type="tertiary", help="Øverst i køen"):
+                                    pin_job(j["job_id"], data_dir=Config.DATA_DIR)
+                                    st.rerun()
+                            with cb:
+                                if st.button("✕", key=f"cx_{j['job_id']}", type="tertiary", help="Avbryt jobben"):
+                                    cancel_job(j["job_id"], data_dir=Config.DATA_DIR)
+                                    st.rerun()
 
-    h1, h2 = st.columns([1, 1])
-    with h1:
-        st.markdown(
-            f'<div class="secrow"><span class="sec-title">Sist behandlet</span>'
-            f'<span class="count-pill">{len(finished)} siste</span></div>',
-            unsafe_allow_html=True,
-        )
-    with h2:
-        if st.button("Legg til videoer →", key="q_add", type="secondary"):
-            st.session_state.page = "oversikt"
-            st.rerun()
+        h1, h2 = st.columns([1, 1])
+        with h1:
+            st.markdown(
+                f'<div class="secrow"><span class="sec-title">Sist behandlet</span>'
+                f'<span class="count-pill">{len(finished)} siste</span></div>',
+                unsafe_allow_html=True,
+            )
+        with h2:
+            if st.button("Legg til videoer →", key="q_add", type="secondary"):
+                st.session_state.page = "oversikt"
+                st.rerun()
 
-    if not finished:
-        st.markdown('<p class="sub-lead" style="padding-top:10px;">Ingen behandlinger ennå.</p>', unsafe_allow_html=True)
-        return
+        if not finished:
+            st.markdown('<p class="sub-lead" style="padding-top:10px;">Ingen behandlinger ennå.</p>', unsafe_allow_html=True)
+            return
 
-    with st.container(border=True):
-        for j in finished:
-            st.markdown(_job_row(j, show_progress=False), unsafe_allow_html=True)
+        with st.container(border=True):
+            for j in finished:
+                fc1, fc2 = st.columns([23, 1], gap="small")
+                with fc1:
+                    st.markdown(_job_row(j, show_progress=False), unsafe_allow_html=True)
+                with fc2:
+                    if st.button("↻", key=f"rt_{j['job_id']}", type="tertiary", help="Prøv igjen"):
+                        retry_job(j["job_id"], data_dir=Config.DATA_DIR)
+                        st.rerun()
+
+    _live()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1274,9 +1387,64 @@ def _search():
 # ─────────────────────────────────────────────────────────────────
 # SYNTHESIS
 # ─────────────────────────────────────────────────────────────────
+def _temakart():
+    """Topic map: cluster the analyzed videos by shared techniques/tools."""
+    from video_knowledge_extractor.cross_video import cluster_videos
+    from video_knowledge_extractor.models import VideoAnalysis
+
+    analyses = _load_analyses()
+    if not analyses:
+        st.info("Ingen analyser ennå — temakartet bygger på ferdig analyserte videoer.")
+        return
+
+    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
+    objs = [
+        VideoAnalysis(
+            video_id=vid,
+            summary_no=a["summary_no"],
+            techniques_tools=a["techniques_tools"],
+            relevance_score=a["relevance_score"],
+            practical_score=a["practical_score"],
+            redundancy_score=a["redundancy_score"],
+        )
+        for vid, a in analyses.items()
+    ]
+    clusters = cluster_videos(objs, {vid: (videos[vid].title if vid in videos else vid) for vid in analyses})
+    clusters.sort(key=lambda c: -len(c.videos))
+    if not clusters:
+        return
+
+    st.markdown(
+        '<div class="secrow"><span class="sec-title">Temakart</span>'
+        '<span class="count-pill">lokalt, uten LLM</span></div>',
+        unsafe_allow_html=True,
+    )
+    for c in clusters:
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="panel-title">{c.name} '
+                f'<span class="count-pill">{len(c.videos)} videoer</span></div>',
+                unsafe_allow_html=True,
+            )
+            if c.overlapping_concepts:
+                chips = "".join(
+                    f'<span class="tchip-c">{x.title()}</span>' for x in c.overlapping_concepts
+                )
+                st.markdown(f'<div style="margin-bottom:6px;">{chips}</div>', unsafe_allow_html=True)
+            vchips = []
+            for r in c.videos:
+                v = videos.get(r.video_id)
+                icon = _plat_icon(v.platform) if v else ""
+                vchips.append(
+                    f'<span class="tchip" title="{r.title}">{icon}{r.title}</span>'
+                )
+            st.markdown("".join(vchips), unsafe_allow_html=True)
+
+
 def _synthesis():
     st.markdown("<h1>Syntese</h1>", unsafe_allow_html=True)
     st.markdown("<p class='lead'>Samlet analyse av hele biblioteket ditt.</p>", unsafe_allow_html=True)
+    _temakart()
     if st.button("Generer / oppdater syntese", type="primary"):
         with st.spinner("Genererer syntese..."):
             try:

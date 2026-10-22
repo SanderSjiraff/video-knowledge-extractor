@@ -30,9 +30,10 @@ JOB_STAGES = (
     "embedding",
     "done",
     "failed",
+    "cancelled",
 )
 
-TERMINAL_STAGES = {"done", "failed"}
+TERMINAL_STAGES = {"done", "failed", "cancelled"}
 
 # Default pipeline options applied when the submitter does not specify any.
 DEFAULT_OPTIONS = {
@@ -76,6 +77,8 @@ def init_jobs_table(data_dir: Path = Path("data")) -> None:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
         if "kind" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'video'")
+        if "pinned" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
 
@@ -137,7 +140,7 @@ def list_jobs(
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE status NOT IN ('done', 'failed') "
+                "SELECT * FROM jobs WHERE status NOT IN ('done', 'failed', 'cancelled') "
                 "ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
@@ -153,8 +156,8 @@ def list_active_jobs(data_dir: Path = Path("data")) -> list[dict[str, Any]]:
     init_jobs_table(data_dir)
     with get_connection(data_dir) as conn:
         rows = conn.execute(
-            "SELECT * FROM jobs WHERE status NOT IN ('done', 'failed') "
-            "ORDER BY created_at"
+            "SELECT * FROM jobs WHERE status NOT IN ('done', 'failed', 'cancelled') "
+            "ORDER BY pinned DESC, created_at"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
 
@@ -163,7 +166,7 @@ def count_active_jobs(data_dir: Path = Path("data")) -> int:
     init_jobs_table(data_dir)
     with get_connection(data_dir) as conn:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM jobs WHERE status NOT IN ('done', 'failed')"
+            "SELECT COUNT(*) AS n FROM jobs WHERE status NOT IN ('done', 'failed', 'cancelled')"
         ).fetchone()
     return int(row["n"])
 
@@ -182,6 +185,49 @@ def count_finished_jobs(data_dir: Path = Path("data")) -> int:
     return int(row["n"])
 
 
+def cancel_job(job_id: str, data_dir: Path = Path("data")) -> bool:
+    """Cancel a job that is still queued.  Returns False if not possible."""
+    init_jobs_table(data_dir)
+    now = _now()
+    with get_connection(data_dir) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'cancelled', pinned = 0, note = 'Avbrutt av bruker', "
+            "updated_at = ? WHERE job_id = ? AND status = 'queued'",
+            (now, job_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def retry_job(job_id: str, data_dir: Path = Path("data")) -> bool:
+    """Re-queue a terminal job (done/failed/cancelled) for another run."""
+    init_jobs_table(data_dir)
+    now = _now()
+    with get_connection(data_dir) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET status = 'queued', progress = 0, note = NULL, "
+            "error_message = NULL, updated_at = ? "
+            "WHERE job_id = ? AND status IN ('done', 'failed', 'cancelled')",
+            (now, job_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def pin_job(job_id: str, data_dir: Path = Path("data")) -> bool:
+    """Move a queued job to the front of the queue."""
+    init_jobs_table(data_dir)
+    now = _now()
+    with get_connection(data_dir) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET pinned = 1, updated_at = ? "
+            "WHERE job_id = ? AND status = 'queued'",
+            (now, job_id),
+        )
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def claim_next_job(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
     """Atomically claim the oldest queued job (status queued -> discovering).
 
@@ -192,13 +238,14 @@ def claim_next_job(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
     init_jobs_table(data_dir)
     with get_connection(data_dir) as conn:
         row = conn.execute(
-            "SELECT * FROM jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+            "SELECT * FROM jobs WHERE status = 'queued' "
+            "ORDER BY pinned DESC, created_at LIMIT 1"
         ).fetchone()
         if row is None:
             return None
         now = _now()
         cur = conn.execute(
-            "UPDATE jobs SET status = 'discovering', updated_at = ? "
+            "UPDATE jobs SET status = 'discovering', pinned = 0, updated_at = ? "
             "WHERE job_id = ? AND status = 'queued'",
             (now, row["job_id"]),
         )

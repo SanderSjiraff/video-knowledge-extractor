@@ -102,6 +102,32 @@ def extract_frames(video_path: Path, interval: float, frames_dir: Path, max_fram
     return [(i * step, fp) for i, fp in enumerate(frames[: max(0, int(max_frames))])]
 
 
+def extract_thumbnail(video_path: Path, thumb_dir: Path, out_id: str) -> Optional[Path]:
+    """Extract one ~320px-wide JPG frame (~1s in) for UI thumbnails.
+
+    Returns the thumbnail path, or None when ffmpeg is missing or the frame
+    could not be produced.  Existing thumbnails are reused (idempotent).
+    """
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    dest = thumb_dir / f"{out_id}.jpg"
+    if dest.exists() and dest.stat().st_size > 0:
+        return dest
+    if not ffmpeg_available():
+        return None
+    cmd = [
+        "ffmpeg", "-ss", "1", "-i", str(video_path),
+        "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", "-y", str(dest),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except Exception:  # noqa: BLE001 - a bad file must not kill the job
+        return None
+    if result.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        return None
+    return dest
+
+
 def _ocr_easyocr(frame_path: str) -> str:
     global _ocr_reader
     try:

@@ -98,10 +98,11 @@ class Config:
     EXPORTS_DIR: Path = Path("data/exports")
     AUDIO_DIR: Path = Path("data/audio")
     VIDEO_DIR: Path = Path("data/video")
+    THUMBS_DIR: Path = Path("data/thumbs")
 
     @classmethod
     def ensure_dirs(cls) -> None:
-        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR, cls.AUDIO_DIR, cls.VIDEO_DIR]:
+        for d in [cls.DATA_DIR, cls.CACHE_DIR, cls.TRANSCRIPTS_DIR, cls.ANALYSES_DIR, cls.EXPORTS_DIR, cls.AUDIO_DIR, cls.VIDEO_DIR, cls.THUMBS_DIR]:
             d.mkdir(parents=True, exist_ok=True)
 
     @classmethod

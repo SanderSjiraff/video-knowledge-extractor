@@ -174,6 +174,31 @@ def _stage_transcribe(video: Video, data_dir: Path) -> None:
     process_whisper_transcripts([video], force=False, keep_audio=True)
 
 
+def _stage_thumbnail(video: Video, data_dir: Path) -> None:
+    """Grab one dashboard thumbnail frame from a local video file, if any.
+
+    No-op when only audio was downloaded (e.g. YouTube m4a) or the post is a
+    photo slideshow.  Best-effort: never raises.
+    """
+    if video.video_id.startswith("photo-"):
+        return
+    from .visual import extract_thumbnail
+
+    video_exts = {".mp4", ".mov", ".webm", ".mkv"}
+    candidates: list[Path] = []
+    for d in (Config.VIDEO_DIR, Config.AUDIO_DIR):
+        candidates.extend(
+            p for p in d.glob(f"{video.video_id}.*") if p.suffix.lower() in video_exts
+        )
+    local = Path(video.url)
+    if local.suffix.lower() in video_exts and local.exists():
+        candidates.append(local)
+    for p in candidates:
+        if extract_thumbnail(p, Config.THUMBS_DIR, video.video_id) is not None:
+            console.print(f"  [dim]thumbnail saved for {video.video_id}[/dim]")
+            return
+
+
 def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
     """Run the full pipeline for one claimed job. Updates the job as it goes."""
     data_dir = data_dir or Config.DATA_DIR
@@ -252,6 +277,12 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
                 )
                 console.print(f"  [yellow]{video.video_id}: no transcript, job finished[/yellow]")
                 return
+
+    # --- Stage 2b: thumbnail (best-effort, cosmetic only) -------------------
+    try:
+        _stage_thumbnail(video, data_dir)
+    except Exception:  # noqa: BLE001 - a missing frame must not kill the job
+        pass
 
     # --- Stage 3: on-screen text (OCR) -- optional, non-fatal ---------------
     # Slideshows already capture on-screen text on the slides stage above.
