@@ -567,6 +567,7 @@ h1 {{
 .eta-ico {{ font-size: 17px; line-height: 1.2; }}
 .eta-lbl {{ color: #8b949e; font-size: 11px; }}
 .eta-val {{ color: #e6edf3; font-size: 14px; font-weight: 700; }}
+.tmthumb .vthumb, .tmthumb .vthumb-ph {{ margin-right: 0; }}
 .qlast {{ font-size: 12px; color: #8b949e; flex-shrink: 0; width: 92px; text-align: right; }}
 </style>
 """,
@@ -1475,6 +1476,13 @@ def _temakart():
                 cols = st.columns(4, gap="small")
                 for c, r in zip(cols, vids[i : i + 4]):
                     with c:
+                        v = videos.get(r.video_id)
+                        if v:
+                            st.markdown(
+                                f'<div class="tmthumb" style="margin-bottom:4px;">'
+                                f"{_thumb_html(v)}</div>",
+                                unsafe_allow_html=True,
+                            )
                         label = r.title if len(r.title) <= 30 else r.title[:27] + "…"
                         if st.button(
                             label,
