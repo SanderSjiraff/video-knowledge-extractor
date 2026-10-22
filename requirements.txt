@@ -1,4 +1,7 @@
-yt-dlp>=2024.10.7
+yt-dlp>=2026.10.21
+# Browser TLS impersonation for yt-dlp — required by the TikTok/Instagram
+# extractors ("Unexpected response from webpage request" without it).
+curl_cffi>=0.7.0
 youtube-transcript-api>=1.2.4,<2
 streamlit>=1.39.0
 fastapi>=0.110.0
@@ -18,9 +21,9 @@ faster-whisper>=1.0.0
 # nvidia-cublas-cu12
 # nvidia-cudnn-cu12
 
-# Optional: on-screen text capture ('screen-text'). Also needs ffmpeg on PATH.
-# Uncomment one OCR engine:
-# easyocr            (or: paddleocr + paddlepaddle)
+# On-screen text capture ('screen-text' + the no-speech screen fallback).
+# Also needs ffmpeg on PATH.
+easyocr>=1.7.1
 # easyocr pulls in a CPU-only torch on Windows; for GPU OCR reinstall torch
 # from the CUDA index, e.g.:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130

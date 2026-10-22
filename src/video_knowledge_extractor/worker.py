@@ -125,6 +125,27 @@ def resolve_video(url: str, platform: str) -> Video:
                 status=VideoStatus.DISCOVERED,
                 platform=platform,
             )
+        if platform == "tiktok" and "/video/" in final_url:
+            # yt-dlp's TikTok extractor is flaky (bot-check responses), but
+            # the web page still carries the full item data — scrape it.
+            from .slides import SlideshowError, scrape_tiktok_video
+
+            try:
+                info = scrape_tiktok_video(final_url)
+            except SlideshowError as exc:
+                raise JobAborted(f"Kunne ikke hente metadata fra TikTok: {exc}")
+            if not info["id"]:
+                raise JobAborted("Kunne ikke hente video-ID fra TikTok")
+            return Video(
+                video_id=info["id"],
+                title=info["desc"][:200] or "Untitled",
+                url=url,
+                duration_seconds=info["duration"],
+                channel=info["author"] or "Unknown",
+                playlist_order=0,
+                status=VideoStatus.DISCOVERED,
+                platform="tiktok",
+            )
         raise JobAborted(f"Kunne ikke hente metadata fra {platform} (yt-dlp feilet eller lenken er ikke gyldig)")
     duration = meta.get("duration")
     return Video(
@@ -209,18 +230,28 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
         update_job(job_id, status="transcribing", progress=15, data_dir=data_dir)
         _stage_transcribe(video, data_dir)
         transcript = get_transcript(video.video_id, data_dir=data_dir)
-        if transcript is None:
-            stored = get_video(video.video_id, data_dir=data_dir)
-            detail = (stored.error_message if stored else "") or "Whisper fant ingen tale"
-            update_job(
-                job_id,
-                status="done",
-                progress=100,
-                note=f"Ingen transkript: {detail}",
-                data_dir=data_dir,
-            )
-            console.print(f"  [yellow]{video.video_id}: no transcript, job finished[/yellow]")
-            return
+        if transcript is None or not transcript.segments:
+            # No usable speech (Whisper saves an empty transcript for
+            # music-only videos).  The content may live on screen (text
+            # overlays, slides, screenshots) — capture it, same dual channel
+            # as the slideshow path, so the analysis can still run.
+            from .screen_fallback import screen_fallback_transcript
+
+            transcript, fb_note = screen_fallback_transcript(video, data_dir=data_dir)
+            if fb_note:
+                note = (note + "; " if note else "") + fb_note
+            if transcript is None:
+                stored = get_video(video.video_id, data_dir=data_dir)
+                detail = (stored.error_message if stored else "") or "Whisper fant ingen tale"
+                update_job(
+                    job_id,
+                    status="done",
+                    progress=100,
+                    note=f"Ingen transkript: {detail}; {fb_note}",
+                    data_dir=data_dir,
+                )
+                console.print(f"  [yellow]{video.video_id}: no transcript, job finished[/yellow]")
+                return
 
     # --- Stage 3: on-screen text (OCR) -- optional, non-fatal ---------------
     # Slideshows already capture on-screen text on the slides stage above.
@@ -269,6 +300,18 @@ def process_job(job: dict, data_dir: Optional[Path] = None) -> None:
                 note = (note + "; " if note else "") + "embeddings feilet"
         except Exception as exc:  # noqa: BLE001 - embeddings are best-effort
             note = (note + "; " if note else "") + f"embeddings utilgjengelig: {exc}"
+
+    # --- Stage 7: refresh Markdown export (Obsidian) -- best-effort ----------
+    # Only for analyzed jobs; export is idempotent (deterministic file names)
+    # so it rewrites the full note set plus INDEKS.md / KUNNSKAP.md.
+    if opts.get("analyze"):
+        try:
+            from .notes import export_markdown
+
+            written = export_markdown(data_dir=data_dir)
+            console.print(f"  [dim]Markdown-eksport oppdatert ({len(written)} filer)[/dim]")
+        except Exception as exc:  # noqa: BLE001 - export is best-effort
+            note = (note + "; " if note else "") + f"Markdown-eksport feilet: {exc}"
 
     update_job(job_id, status="done", progress=100, note=note or None, data_dir=data_dir)
     console.print(f"  [green]Job {job_id[:8]} done:[/green] {video.title or video.video_id}")

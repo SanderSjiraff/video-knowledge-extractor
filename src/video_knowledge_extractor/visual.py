@@ -53,8 +53,10 @@ def _download_video(video: Video, video_dir: Path) -> Path:
         # Many YouTube videos expose only separate video/audio streams, so
         # prefer merged bestvideo+bestaudio (ffmpeg merges them) and fall
         # back to a single progressive file when one exists. 720p is plenty
-        # for OCR/vision and keeps downloads small across many videos.
-        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        # for OCR/vision and keeps downloads small across many videos — but
+        # some posts (e.g. IG reels) only offer higher streams, so fall back
+        # to any resolution before giving up.
+        "format": "bestvideo[height<=720]+bestaudio/bestvideo+bestaudio/best",
         "outtmpl": str(preferred),
         "quiet": True,
         "noprogress": True,
