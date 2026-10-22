@@ -27,7 +27,12 @@ from video_knowledge_extractor.db import (
     search_transcripts,
 )
 from video_knowledge_extractor.discovery import detect_platform
-from video_knowledge_extractor.jobs import count_finished_jobs, enqueue_job, list_jobs
+from video_knowledge_extractor.jobs import (
+    count_finished_jobs,
+    enqueue_job,
+    list_active_jobs,
+    list_jobs,
+)
 from video_knowledge_extractor.models import VideoStatus
 from video_knowledge_extractor.notes import export_markdown
 from video_knowledge_extractor.orchestrator import run_synthesis
@@ -507,6 +512,10 @@ h1 {{
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }}
 .qrow .qsub {{ font-size: 12px; color: #8b949e; margin-top: 1px; }}
+.qrow .qpos {{
+    width: 16px; flex-shrink: 0; text-align: center;
+    font-size: 12px; font-weight: 600; color: #8b949e;
+}}
 .qprog {{
     width: 90px; height: 4px; flex-shrink: 0;
     background: #21262d; border-radius: 2px; overflow: hidden;
@@ -762,8 +771,12 @@ def _overview():
     with right:
         with st.container(border=True):
             st.markdown('<div class="panel-title">Behandlingskø</div>', unsafe_allow_html=True)
-            jobs = list_jobs(limit=5, data_dir=Config.DATA_DIR)
-            if not jobs:
+            st.markdown(
+                '<div class="panel-desc">Øverst i lista behandles først (først inn – først ut).</div>',
+                unsafe_allow_html=True,
+            )
+            active = list_active_jobs(data_dir=Config.DATA_DIR)
+            if not active:
                 st.markdown(
                     """<div class="q-empty">
                         <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#6e7681" stroke-width="1.1">
@@ -779,15 +792,28 @@ def _overview():
                     st.session_state.page = "ko"
                     st.rerun()
             else:
-                for job in jobs:
-                    title = (job.get("title") or job.get("url") or "Video")[:60]
+                n_queued = sum(1 for j in active if j["status"] == "queued")
+                n_running = len(active) - n_queued
+                st.markdown(
+                    f'''<div class="stats-bar">
+                        <span class="stat"><b>{n_queued}</b> venter</span><span class="sep"></span>
+                        <span class="stat"><b>{n_running}</b> behandles</span>
+                    </div>''',
+                    unsafe_allow_html=True,
+                )
+                visible = active[:8]
+                for i, job in enumerate(visible, start=1):
                     st.markdown(
-                        f'''<div class="q-card">
-                            <div class="title">{title}</div>
-                        </div>''',
+                        _job_row(job, show_progress=True, pos=i, show_date=False),
                         unsafe_allow_html=True,
                     )
-                if st.button("Se hele køen →", key="q2", type="secondary"):
+                if len(active) > len(visible):
+                    st.markdown(
+                        f'<div class="qsub" style="padding:8px 4px 2px;">'
+                        f'+ {len(active) - len(visible)} flere i kø</div>',
+                        unsafe_allow_html=True,
+                    )
+                if st.button("Se hele køen →", key="q2", type="secondary", use_container_width=True):
                     st.session_state.page = "ko"
                     st.rerun()
 
@@ -856,7 +882,7 @@ def _job_title(j):
     return Path(url).stem or "Video"
 
 
-def _job_row(j, show_progress):
+def _job_row(j, show_progress, pos=None, show_date=True):
     label = STAGE_LABELS.get(j["status"], j["status"])
     if j["status"] == "queued":
         badge = '<span class="badge-status status-wait"><span class="status-dot" style="background:#8b949e;"></span>I kø</span>'
@@ -875,15 +901,17 @@ def _job_row(j, show_progress):
     err = (j.get("error_message") or "")[:60]
     if j["status"] == "failed" and err:
         sub += f" · {err}"
+    pos_html = f'<span class="qpos">{pos}.</span>' if pos is not None else ""
+    date_html = f'<span class="qlast">{_fmt_date(j["created_at"])}</span>' if show_date else ""
     return f'''<div class="qrow">
-        {_plat_icon(j.get("platform") or "youtube")}
+        {pos_html}{_plat_icon(j.get("platform") or "youtube")}
         <div style="flex:1;min-width:0;">
             <div class="qtitle">{_job_title(j)}</div>
             <div class="qsub">{sub}</div>
         </div>
         {badge}
         {prog_html}
-        <span class="qlast">{_fmt_date(j["created_at"])}</span>
+        {date_html}
     </div>'''
 
 
@@ -891,10 +919,11 @@ def _queue():
     st.markdown("<h1>Kø</h1>", unsafe_allow_html=True)
     st.markdown("<p class='lead'>Videoer som venter på eller er under analyse.</p>", unsafe_allow_html=True)
 
-    jobs = list_jobs(limit=100, data_dir=Config.DATA_DIR)
-    active = [j for j in jobs if j["status"] not in ("done", "failed")]
-    active.sort(key=lambda j: j["created_at"])  # FIFO: eldste først
-    finished = [j for j in jobs if j["status"] in ("done", "failed")][:10]
+    active = list_active_jobs(data_dir=Config.DATA_DIR)  # FIFO: eldste først
+    finished = [
+        j for j in list_jobs(limit=100, data_dir=Config.DATA_DIR)
+        if j["status"] in ("done", "failed")
+    ][:10]
 
     n_queued = sum(1 for j in active if j["status"] == "queued")
     n_running = len(active) - n_queued

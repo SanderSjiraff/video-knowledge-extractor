@@ -144,6 +144,21 @@ def list_jobs(
     return [_row_to_job(r) for r in rows]
 
 
+def list_active_jobs(data_dir: Path = Path("data")) -> list[dict[str, Any]]:
+    """All non-terminal jobs, oldest first (queue processing order).
+
+    Unlike ``list_jobs`` (which is capped at the most recent N rows), this
+    always returns every job still in the pipeline.
+    """
+    init_jobs_table(data_dir)
+    with get_connection(data_dir) as conn:
+        rows = conn.execute(
+            "SELECT * FROM jobs WHERE status NOT IN ('done', 'failed') "
+            "ORDER BY created_at"
+        ).fetchall()
+    return [_row_to_job(r) for r in rows]
+
+
 def count_active_jobs(data_dir: Path = Path("data")) -> int:
     init_jobs_table(data_dir)
     with get_connection(data_dir) as conn:
