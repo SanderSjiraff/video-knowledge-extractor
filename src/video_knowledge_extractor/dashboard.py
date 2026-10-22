@@ -27,7 +27,7 @@ from video_knowledge_extractor.db import (
     search_transcripts,
 )
 from video_knowledge_extractor.discovery import detect_platform
-from video_knowledge_extractor.jobs import enqueue_job, list_jobs
+from video_knowledge_extractor.jobs import count_finished_jobs, enqueue_job, list_jobs
 from video_knowledge_extractor.models import VideoStatus
 from video_knowledge_extractor.notes import export_markdown
 from video_knowledge_extractor.orchestrator import run_synthesis
@@ -898,11 +898,14 @@ def _queue():
 
     n_queued = sum(1 for j in active if j["status"] == "queued")
     n_running = len(active) - n_queued
+    # Count every terminal job in the DB — the `finished` list above is
+    # capped at 10 (it feeds the "Sist behandlet" panel below).
+    n_finished = count_finished_jobs(data_dir=Config.DATA_DIR)
     st.markdown(
         f'''<div class="stats-bar">
             <span class="stat"><b>{n_queued}</b> venter i kø</span><span class="sep"></span>
             <span class="stat"><b>{n_running}</b> behandles nå</span><span class="sep"></span>
-            <span class="stat"><b>{len(finished)}</b> behandlet</span>
+            <span class="stat"><b>{n_finished}</b> behandlet</span>
         </div>''',
         unsafe_allow_html=True,
     )

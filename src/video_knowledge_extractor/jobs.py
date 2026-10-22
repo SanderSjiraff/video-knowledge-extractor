@@ -153,6 +153,20 @@ def count_active_jobs(data_dir: Path = Path("data")) -> int:
     return int(row["n"])
 
 
+def count_finished_jobs(data_dir: Path = Path("data")) -> int:
+    """Total number of jobs that reached a terminal state (done or failed).
+
+    Unlike ``list_jobs`` (which is capped), this counts every job ever
+    finished — used for the queue stats bar.
+    """
+    init_jobs_table(data_dir)
+    with get_connection(data_dir) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status IN ('done', 'failed')"
+        ).fetchone()
+    return int(row["n"])
+
+
 def claim_next_job(data_dir: Path = Path("data")) -> Optional[dict[str, Any]]:
     """Atomically claim the oldest queued job (status queued -> discovering).
 
