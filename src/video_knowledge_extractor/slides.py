@@ -32,6 +32,13 @@ _MOBILE_UA = (
     "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 
+# Video pages (unlike photo pages) only embed the full itemStruct when the
+# request looks like a desktop browser.
+_DESKTOP_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 SLIDE_PROMPT = (
     "Du ser et bilde fra et TikTok-slideshow (bildeserie). Les og gjengi all "
     "synlig tekst ordrett, og beskriv kort hva bildet ellers viser (UI, "
@@ -122,6 +129,81 @@ def fetch_slideshow(url: str) -> dict[str, Any]:
     )
     resp.raise_for_status()
     return parse_slideshow_html(resp.text, final_url)
+
+
+def parse_video_html(html: str) -> dict[str, Any]:
+    """Extract a video post's item data from TikTok's web page HTML.
+
+    Returns ``{"id", "desc", "author", "duration", "play_addr"}`` where
+    ``play_addr`` is a direct mp4 URL from the page data.
+    """
+    m = re.search(
+        r'<script[^>]*id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>',
+        html,
+        re.S,
+    )
+    if not m:
+        raise SlideshowError(
+            "Fant ikke innebygd JSON i TikTok-siden (sidesstrukturen har endret seg?)"
+        )
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError as exc:
+        raise SlideshowError(f"Kunne ikke parse TikTok-JSON: {exc}") from exc
+
+    scope = data.get("__DEFAULT_SCOPE__") or {}
+    item: dict[str, Any] = {}
+    for val in scope.values():
+        if not isinstance(val, dict):
+            continue
+        candidate = (val.get("itemInfo") or {}).get("itemStruct")
+        if isinstance(candidate, dict) and candidate:
+            item = candidate
+            break
+    if not item:
+        raise SlideshowError(
+            "Fant ikke itemStruct i TikTok-siden (innlegget finnes kanskje ikke lenger)"
+        )
+
+    video = item.get("video") or {}
+    play_addr = str(video.get("playAddr") or "")
+    if not play_addr:
+        # Highest-quality variant from the bitrate list, if playAddr is empty.
+        for br in reversed(video.get("bitrateInfo") or []):
+            urls = (br.get("PlayAddr") or {}).get("UrlList") or []
+            if urls:
+                play_addr = str(urls[0])
+                break
+    try:
+        duration = int(video.get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    return {
+        "id": str(item.get("id") or ""),
+        "desc": item.get("desc") or "",
+        "author": (item.get("author") or {}).get("uniqueId") or "",
+        "duration": duration,
+        "play_addr": play_addr,
+    }
+
+
+def scrape_tiktok_video(url: str) -> dict[str, Any]:
+    """Scrape a TikTok video post (canonical URL or short link) for its item data.
+
+    Fallback for when yt-dlp's TikTok extractor fails (bot-check responses):
+    the web page still embeds the full item data, including a direct mp4
+    play address that can be downloaded without yt-dlp.
+    """
+    final_url = resolve_photo_url(url)
+    if "/video/" not in final_url:
+        raise SlideshowError("Lenken peker ikke på et TikTok-videoinnlegg")
+    resp = requests.get(
+        final_url,
+        headers={"User-Agent": _DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return parse_video_html(resp.text)
 
 
 def download_slides(image_urls: list[str], slides_dir: Path) -> list[Path]:

@@ -27,6 +27,13 @@ from .models import Transcript, TranscriptSegment, Video, VideoStatus
 
 console = Console()
 
+# User-Agent for direct TikTok mp4 downloads (some CDNs reject the default
+# python-requests UA).
+_MP4_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 
 def _register_nvidia_dll_dirs() -> None:
     """Add nvidia pip-package DLL dirs to the search path.
@@ -47,8 +54,12 @@ def _register_nvidia_dll_dirs() -> None:
         candidates.append(Path(ctranslate2.__file__).resolve().parents[1] / "nvidia")
     except Exception:
         pass
-    # 2. <repo>/.venv/Lib/site-packages/nvidia (this project's layout)
-    candidates.append(Path(__file__).resolve().parents[3] / ".venv" / "Lib" / "site-packages" / "nvidia")
+    # 2. <repo>/.venv/Lib/site-packages/nvidia (this project's layout).
+    #    The repo root is two levels up from this file; also try one level up
+    #    so nested checkouts (repo inside a folder) still resolve.
+    root = Path(__file__).resolve().parents[2]
+    for base in (root, root.parent):
+        candidates.append(base / ".venv" / "Lib" / "site-packages" / "nvidia")
 
     for base in candidates:
         if base and base.is_dir():
@@ -111,11 +122,24 @@ def _download_audio(video: Video, audio_dir: Path) -> Path:
         "outtmpl": str(preferred),
         "quiet": True,
         "noprogress": True,
+        # Hard limits so a flaky network can never hang the worker forever.
+        "socket_timeout": 30,
+        "retries": 3,
+        "fragment_retries": 3,
     }
     if Config.COOKIES_FILE:
         ydl_opts["cookiefile"] = Config.COOKIES_FILE
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([video.url])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video.url])
+    except Exception:
+        # yt-dlp's TikTok extractor is flaky (bot-check responses); fall
+        # back to the direct mp4 address from the scraped web page.
+        if video.platform == "tiktok":
+            fallback = _download_tiktok_mp4(video, audio_dir)
+            if fallback is not None:
+                return fallback
+        raise
 
     if preferred.exists():
         return preferred
@@ -123,6 +147,48 @@ def _download_audio(video: Video, audio_dir: Path) -> Path:
     if existing:
         return existing[0]
     raise FileNotFoundError(f"No audio file produced for {video.video_id}")
+
+
+def _download_tiktok_mp4(video: Video, audio_dir: Path) -> Optional[Path]:
+    """Download the full mp4 straight from TikTok's web page data.
+
+    Used when yt-dlp's TikTok extractor fails.  faster-whisper (PyAV)
+    decodes mp4 directly, so no separate audio extraction is needed.
+    Returns None when the page data has no playable address.
+    """
+    from .slides import SlideshowError, scrape_tiktok_video
+
+    try:
+        info = scrape_tiktok_video(video.url)
+    except SlideshowError:
+        return None
+    play_addr = info.get("play_addr")
+    if not play_addr:
+        return None
+
+    dest = audio_dir / f"{video.video_id}.mp4"
+    try:
+        # TikTok's CDN rejects plain python-requests (403); impersonating a
+        # browser TLS fingerprint gets through.
+        from curl_cffi import requests as cffi_requests
+
+        resp = cffi_requests.get(play_addr, impersonate="chrome", timeout=180)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+    except ImportError:
+        import requests
+
+        resp = requests.get(
+            play_addr,
+            headers={"User-Agent": _MP4_UA, "Referer": "https://www.tiktok.com/"},
+            timeout=180,
+        )
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+    if dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        return None
+    return dest
 
 
 def _srt_time(x: float) -> str:
