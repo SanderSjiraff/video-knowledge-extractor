@@ -226,6 +226,21 @@ def transcribe_video(
         for seg in segments_iter
     ]
 
+    if not segments:
+        # Second chance without the VAD: on TikTok/IG clips with loud
+        # background music the VAD can strip the voice entirely.  The raised
+        # no-speech threshold keeps truly silent audio from hallucinating.
+        console.print("      [yellow]VAD found no speech — retrying without VAD[/yellow]")
+        segments_iter, info = model.transcribe(
+            str(audio_path), vad_filter=False, no_speech_threshold=0.85
+        )
+        segments = [
+            TranscriptSegment(
+                start=seg.start, duration=seg.end - seg.start, text=seg.text.strip()
+            )
+            for seg in segments_iter
+        ]
+
     transcript = Transcript(
         video_id=video.video_id,
         language=info.language,
