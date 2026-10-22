@@ -521,6 +521,26 @@ h1 {{
     background: #21262d; border-radius: 2px; overflow: hidden;
 }}
 .qprog > div {{ height: 100%; background: #388bfd; border-radius: 2px; }}
+.oqrow {{
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 2px;
+    border-bottom: 1px solid #1d2530;
+}}
+.oqrow:last-child {{ border-bottom: none; }}
+.oqrow .oqpos {{
+    width: 14px; flex-shrink: 0; text-align: center;
+    font-size: 12px; font-weight: 600; color: #8b949e;
+}}
+.oqrow .oqtitle {{
+    flex: 1; min-width: 0;
+    font-size: 13px; color: #e6edf3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}}
+.oqrow .oqprog {{
+    width: 46px; height: 3px; flex-shrink: 0;
+    background: #21262d; border-radius: 2px; overflow: hidden;
+}}
+.oqrow .oqprog > div {{ height: 100%; background: #388bfd; }}
 .qlast {{ font-size: 12px; color: #8b949e; flex-shrink: 0; width: 92px; text-align: right; }}
 </style>
 """,
@@ -795,21 +815,17 @@ def _overview():
                 n_queued = sum(1 for j in active if j["status"] == "queued")
                 n_running = len(active) - n_queued
                 st.markdown(
-                    f'''<div class="stats-bar">
-                        <span class="stat"><b>{n_queued}</b> venter</span><span class="sep"></span>
-                        <span class="stat"><b>{n_running}</b> behandles</span>
-                    </div>''',
+                    f'<div class="qsub" style="padding:2px 2px 8px;">'
+                    f'<b style="color:#e6edf3;">{n_queued}</b> venter &middot; '
+                    f'<b style="color:#e6edf3;">{n_running}</b> behandles</div>',
                     unsafe_allow_html=True,
                 )
-                visible = active[:8]
+                visible = active[:5]
                 for i, job in enumerate(visible, start=1):
-                    st.markdown(
-                        _job_row(job, show_progress=True, pos=i, show_date=False),
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(_ov_queue_row(job, i), unsafe_allow_html=True)
                 if len(active) > len(visible):
                     st.markdown(
-                        f'<div class="qsub" style="padding:8px 4px 2px;">'
+                        f'<div class="qsub" style="padding:6px 2px 0;">'
                         f'+ {len(active) - len(visible)} flere i kø</div>',
                         unsafe_allow_html=True,
                     )
@@ -903,16 +919,33 @@ def _job_row(j, show_progress, pos=None, show_date=True):
         sub += f" · {err}"
     pos_html = f'<span class="qpos">{pos}.</span>' if pos is not None else ""
     date_html = f'<span class="qlast">{_fmt_date(j["created_at"])}</span>' if show_date else ""
-    return f'''<div class="qrow">
-        {pos_html}{_plat_icon(j.get("platform") or "youtube")}
-        <div style="flex:1;min-width:0;">
-            <div class="qtitle">{_job_title(j)}</div>
-            <div class="qsub">{sub}</div>
-        </div>
-        {badge}
-        {prog_html}
-        {date_html}
-    </div>'''
+    # One-line string on purpose: a whitespace-only line inside the HTML
+    # would end the markdown HTML block and break the layout.
+    return (
+        f'<div class="qrow">{pos_html}{_plat_icon(j.get("platform") or "youtube")}'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div class="qtitle">{_job_title(j)}</div>'
+        f'<div class="qsub">{sub}</div>'
+        f'</div>{badge}{prog_html}{date_html}</div>'
+    )
+
+
+def _ov_queue_row(j, pos):
+    """Compact single-line queue row for the front page (active jobs only)."""
+    if j["status"] == "queued":
+        badge = '<span class="badge-status status-wait"><span class="status-dot" style="background:#8b949e;"></span>I kø</span>'
+        prog = ""
+    else:
+        label = STAGE_LABELS.get(j["status"], j["status"])
+        badge = f'<span class="badge-status status-run"><span class="status-dot" style="background:#58a6ff;"></span>{label}</span>'
+        p = max(0, min(100, int(j.get("progress") or 0)))
+        prog = f'<div class="oqprog"><div style="width:{p}%"></div></div>'
+    return (
+        f'<div class="oqrow"><span class="oqpos">{pos}.</span>'
+        f'{_plat_icon(j.get("platform") or "youtube")}'
+        f'<span class="oqtitle">{_job_title(j)}</span>'
+        f'{badge}{prog}</div>'
+    )
 
 
 def _queue():
