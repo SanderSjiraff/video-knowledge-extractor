@@ -88,16 +88,9 @@ Lokale filer (opplasting/bot) transkriberes direkte med Whisper uten nedlasting.
 
 **TikTok-slideshow (bildekaruseller):** lenker på formen `…/photo/<id>` (også `vm.tiktok.com`-korthenker) behandles automatisk: bildene lastes ned til `data/slides/<id>/`, hvert bilde OCR-leses og beskrives av visjonsmodellen (altid på for karuseller – det er hele innholdet), og det lages et syntetisk «transkript» av tekstene slik at analyse, søk og embeddings fungerer som for vanlige videoer. Instagram-bildeinnlegg støttes foreløpig ikke.
 
-**Se dashboardet fra telefonen (valgfritt):** dashboardet kjører lokalt på `http://localhost:8501`. For å åpne det i mobilens nettleser kan du bruke en gratis Cloudflare-tunnel:
+**Se dashboardet fra telefonen (valgfritt):** dashboardet kjører lokalt på `http://localhost:8501`. Er telefonen på samme nettverk (hjemme-Wi-Fi), kan du åpne PCens LAN-IP i stedet, f.eks. `http://10.52.224.197:8501` (IPen vises av Streamlit ved oppstart, eller `ipconfig` i PowerShell). Ingen tunnel eller Cloudflare trengs. Telegram-botten trenger heller ingen offentlig URL – den bruker long polling utgående, så lenker sendt mens PCen er av hentes opp når plattformen starter (opptil 24 timer).
 
-```powershell
-winget install cloudflare.cloudflared
-cloudflared tunnel --url http://localhost:8501
-```
-
-Tunnelen skriver ut en `https://….trycloudflare.com`-URL – åpne den i telefonen. Quick-tunnel-URLen byttes hver gang tunnelen starter; for fast URL trenger du et domene i Cloudflare-kontoen din (named tunnel, `cloudflared tunnel login` + `route dns`). Botten trenger ingen tunnel – den bruker long polling utgående.
-
-**Auto-start (Windows):** `start-platform.bat` starter API + worker + dashboard + bot + quick-tunnel. En snopp i brukeren sin oppstartmappe («VKE Platform») kjører den automatisk ved pålogging, slik at hele plattformen (og tunnel-URLen) kommer tilbake etter omstart – med en ny, tilfeldig quick-tunnel-URL.
+**Desktop-app (Windows):** «VKE Platform»-snoppen på skrivebordet (bygd fra `launcher.pyw` med PyInstaller → `dist/VKE Platform.exe`) starter API + worker + bot + dashboard hvis de ikke allerede kjører, og åpner dashboardet i nettleseren. `start-platform.bat` gjør det samme via konsolvinduer; tjenesloggene ligger i `data/logs/`.
 
 ## Bruk (CLI)
 

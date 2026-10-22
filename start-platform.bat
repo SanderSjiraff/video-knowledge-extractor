@@ -30,18 +30,13 @@ echo [3/5] Starter Telegram-bot...
 start "VKE Bot" cmd /k "C:\vke_venv\Scripts\python.exe src\cli.py bot"
 
 :: Start Streamlit dashboard (vent 2 sek for at API skal starte)
-echo [4/5] Starter Streamlit-dashboard...
+echo [4/4] Starter Streamlit-dashboard...
 timeout /t 2 /nobreak >nul
 start "VKE Dashboard" cmd /k "C:\vke_venv\Scripts\streamlit.exe run src\video_knowledge_extractor\dashboard.py"
-
-:: Start Cloudflare quick tunnel (dashboard fra telefon)
-echo [5/5] Starter Cloudflare-tunnel...
-start "VKE Tunnel" cmd /k "cloudflared tunnel --url http://localhost:8501"
 
 echo.
 echo Alle tjenester startet!
 echo API:       http://127.0.0.1:8000
 echo Dashboard: http://localhost:8501
-echo Tunnel-URL: se i vinduet "VKE Tunnel" (https://....trycloudflare.com)
 echo.
 pause
