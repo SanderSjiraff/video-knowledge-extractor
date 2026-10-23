@@ -564,8 +564,15 @@ h1 {{
 )
 
 # Additional styles for the reference layout; native widgets retain keyboard support.
+# The script also removes any saved "sidebar hidden" state (set when the old
+# collapse button was clicked), so the sidebar always starts expanded.
 st.markdown(
-    "<style>" + Path(__file__).with_name("dashboard.css").read_text(encoding="utf-8") + "</style>",
+    "<style>" + Path(__file__).with_name("dashboard.css").read_text(encoding="utf-8") + "</style>"
+    "<script>(function(){try{"
+    "Object.keys(localStorage)"
+    ".filter(function(k){return k.indexOf('stSidebarCollapsed-')===0;})"
+    ".forEach(function(k){localStorage.removeItem(k);});"
+    "}catch(e){}})();</script>",
     unsafe_allow_html=True,
 )
 

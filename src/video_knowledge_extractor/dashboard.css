@@ -13,8 +13,11 @@ html, body, .stApp {
     background: #141c24 !important;
     width: 242px !important; min-width: 242px !important; max-width: 242px !important;
     border-right: 1px solid #293541 !important;
+    /* Tvinger sidebaren til å være synlig selv om den er gjemt i browseren (localStorage) */
+    transform: none !important;
 }
 [data-testid="stSidebarHeader"] { height: 12px !important; min-height: 12px !important; padding: 0 !important; }
+[data-testid="stSidebarCollapseButton"] { display: none !important; }
 [data-testid="stSidebarUserContent"] { padding: 0 18px 20px !important; }
 [data-testid="stSidebar"] .stButton > button {
     height: 49px !important; padding-left: 20px !important;
