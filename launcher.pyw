@@ -29,7 +29,11 @@ VENV = Path(r"C:\vke_venv\Scripts")
 PYTHON = VENV / "python.exe"
 STREAMLIT = VENV / "streamlit.exe"
 LOGS = ROOT / "data" / "logs"
-DETACH = 0x00000008 | 0x00000010  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+# NB: 0x8 | 0x10 (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP) fails with
+# WinError 87 (ERROR_INVALID_PARAMETER) on this Windows build. Use
+# DETACHED_PROCESS alone: the child is detached from any console, and the
+# process-group isolation is meaningless when there is no shared console.
+DETACH = 0x00000008  # DETACHED_PROCESS
 
 
 def port_open(port: int) -> bool:
