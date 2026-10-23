@@ -230,16 +230,6 @@ html, body, .stApp {{
 [data-testid="stSidebar"] .stButton > button .stMarkdownContainer p {{ margin: 0 !important; line-height: 1.25 !important; }}
 {NAV_ICONS_CSS}
 
-/* === PANEL BOXES (st.container(border=True) i Streamlit 1.66) === */
-[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"] {{
-    background: #131a22 !important;
-    border: 1px solid #26303b !important;
-    border-radius: 12px !important;
-    padding: 20px !important;
-}}
-[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tblbox) {{
-    padding: 14px 16px 10px 16px !important;
-}}
 [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][data-test-wrap="false"]:has(.tabmark) {{
     background: transparent !important;
     border: none !important;
@@ -574,25 +564,31 @@ h1 {{
     unsafe_allow_html=True,
 )
 
-# Force the sidebar open even if the browser remembered it closed
-_SIDEBAR_JS = """
-<script>
-(function () {
-    var tries = 0;
-    var iv = setInterval(function () {
-        var doc = window.parent.document;
-        var btn = doc.querySelector('button[aria-label="Open sidebar"]')
-               || doc.querySelector('[data-testid="collapsedControl"]');
-        if (btn) {
-            btn.click();
-            clearInterval(iv);
-            return;
-        }
-        if (++tries > 40) { clearInterval(iv); }
-    }, 300);
-})();
-</script>
-"""
+# Additional styles for the reference layout; native widgets retain keyboard support.
+st.markdown(
+    "<style>" + Path(__file__).with_name("dashboard.css").read_text(encoding="utf-8") + "</style>",
+    unsafe_allow_html=True,
+)
+
+def _global_search_changed():
+    st.session_state["ls"] = st.session_state.global_search.strip()
+    st.session_state.lib_page = 1
+    if st.session_state["ls"]:
+        st.session_state.page = "bibliotek"
+
+
+def _topbar():
+    with st.container(key="topbar"):
+        search, action = st.columns([6, 1.1])
+        with search:
+            st.text_input(
+                "Søk i videoene dine", placeholder="Søk i videoene dine",
+                label_visibility="collapsed", key="global_search", on_change=_global_search_changed,
+            )
+        with action:
+            if st.button("⊕  Legg til videoer", key="add_videos", use_container_width=True):
+                st.session_state.page = "oversikt"
+                st.rerun()
 
 # ─────────────────────────────────────────────────────────────────
 # HELPERS
@@ -714,9 +710,9 @@ def _load_analyses():
 def _sidebar():
     st.sidebar.markdown(
         """
-        <div style="padding: 4px 12px 20px 12px; margin-bottom: 12px;">
-            <div style="font-size: 25px; font-weight: 800; color: #f0f6fc; letter-spacing: -0.5px;">VKE</div>
-            <div style="font-size: 12.5px; color: #8b949e; margin-top: 5px;">Video Knowledge Extractor</div>
+        <div style="padding: 4px 0 20px; margin-bottom: 12px;">
+            <div style="font-size: 32px; font-weight: 800; color: #f0f6fc; letter-spacing: -0.5px;">VKE</div>
+            <div style="font-size: 13px; color: #aebfd5; margin-top: 0; white-space: nowrap;">Video Knowledge Extractor</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -756,10 +752,10 @@ def _overview():
         unsafe_allow_html=True,
     )
 
-    left, right = st.columns([215, 100])
+    left, right = st.columns([2, 1], gap="medium")
 
     with left:
-        with st.container(border=True):
+        with st.container(border=True, key="add_panel"):
             st.markdown('<div class="panel-title">Legg til videoer</div>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="panel-desc">Lim inn lenker fra YouTube, TikTok eller Instagram.</div>',
@@ -769,10 +765,10 @@ def _overview():
                 "URLer",
                 placeholder="Én videolenke per linje",
                 label_visibility="collapsed",
-                height=90,
+                height=102,
                 key="ov_u",
             )
-            b1, b2 = st.columns([5, 7])
+            b1, spacer, b2 = st.columns([1.2, 2.2, 1.5])
             with b1:
                 files = st.file_uploader(
                     "Last opp filer",
@@ -822,7 +818,7 @@ def _overview():
 
     with right:
         _eta_box()
-        with st.container(border=True):
+        with st.container(border=True, key="queue_panel"):
             st.markdown('<div class="panel-title">Behandlingskø</div>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="panel-desc">Øverst i lista behandles først (først inn – først ut).</div>',
@@ -843,7 +839,7 @@ def _overview():
                         </div>""",
                         unsafe_allow_html=True,
                     )
-                    if st.button("Se hele køen →", key="q1", type="secondary"):
+                    if st.button("Se siste behandlinger →", key="q1", type="tertiary", use_container_width=True):
                         st.session_state.page = "ko"
                         st.rerun()
                     return
@@ -877,24 +873,24 @@ def _overview():
     if not recent:
         return
 
-    h1, h2 = st.columns([1, 1])
-    with h1:
-        st.markdown(
-            f'<div class="secrow"><span class="sec-title">Sist lagt til</span>'
-            f'<span class="count-pill">{len(videos)} videoer</span></div>',
-            unsafe_allow_html=True,
-        )
-    with h2:
-        if st.button("Se alle videoer →", key="sa", type="secondary"):
-            st.session_state.page = "bibliotek"
-            st.rerun()
+    with st.container(border=True, key="recent_table"):
+        h1, h2 = st.columns([5, 1])
+        with h1:
+            st.markdown(
+                f'<div class="secrow"><span class="sec-title">Sist lagt til</span>'
+                f'<span class="count-pill">{len(videos)} videoer</span></div>',
+                unsafe_allow_html=True,
+            )
+        with h2:
+            if st.button("Se alle videoer →", key="sa", type="secondary"):
+                st.session_state.page = "bibliotek"
+                st.rerun()
 
-    with st.container(border=True):
         st.markdown('<div class="tblbox"></div>', unsafe_allow_html=True)
-        ratios = [0.7, 4.4, 1.6, 1.0, 1.5, 1.5, 0.7]
+        ratios = [0.45, 4.4, 1.6, 1.0, 1.5, 1.5, 0.7]
         hc = st.columns(ratios)
         for col, h in zip(
-            hc, ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Platform", "Varighet", "Status", "Lagt til", ""]
+            hc, ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Plattform", "Varighet", "Status", "Lagt til", ""]
         ):
             with col:
                 st.markdown(f'<div class="tbl-header">{h}</div>', unsafe_allow_html=True)
@@ -1251,9 +1247,9 @@ def _library():
         filtered.sort(key=lambda v: analyses.get(v.video_id, {}).get("relevance_score", 0), reverse=True)
 
     # Tabs (underline style)
-    with st.container(border=True):
+    with st.container(border=True, key="library_tabs"):
         st.markdown('<div class="tabmark"></div>', unsafe_allow_html=True)
-        tc = st.columns(3)
+        tc = st.columns([1.2, 1.4, 1.6, 5.8])
         tab_labels = [
             ("alle", f"Alle videoer   ·   {len(videos)}"),
             ("anbefalt", "Anbefalt å se"),
@@ -1276,13 +1272,13 @@ def _library():
 
     # Table
     if items:
-        with st.container(border=True):
+        with st.container(border=True, key="library_table"):
             st.markdown('<div class="tblbox"></div>', unsafe_allow_html=True)
-            ratios = [0.7, 4.0, 1.6, 1.0, 1.4, 1.5, 1.8]
+            ratios = [0.45, 4.0, 1.6, 1.0, 1.4, 1.5, 1.8]
             hc = st.columns(ratios)
             for col, h in zip(
                 hc,
-                ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Platform", "Varighet", "Vurdering", "Status", ""],
+                ['<span class="cbx" style="opacity:.6;"></span>', "Video", "Plattform", "Varighet", "Vurdering", "Status", ""],
             ):
                 with col:
                     st.markdown(f'<div class="tbl-header">{h}</div>', unsafe_allow_html=True)
@@ -1322,34 +1318,34 @@ def _library():
                             unsafe_allow_html=True,
                         )
 
-        # Footer + pagination (outside the box)
-        fl, fr = st.columns([2, 1])
-        with fl:
-            st.markdown(
-                f'<div class="pageinfo">Viser {start+1}–{min(start+per_page, len(filtered))} av {len(filtered)} videoer</div>',
-                unsafe_allow_html=True,
-            )
-        with fr:
-            if total_pages > 1:
-                pages = _page_window(page, total_pages)
-                cols = st.columns([0.8] + [1.0] * len(pages) + [0.8])
-                with cols[0]:
-                    if st.button("‹", key="pg_p", type="secondary", disabled=page <= 1):
-                        st.session_state.lib_page = page - 1
-                        st.rerun()
-                for j, p in enumerate(pages):
-                    with cols[1 + j]:
-                        if st.button(
-                            str(p),
-                            key=f"pg_{p}",
-                            type="primary" if p == page else "secondary",
-                        ):
-                            st.session_state.lib_page = p
+            # Footer + pagination
+            fl, fr = st.columns([2, 1])
+            with fl:
+                st.markdown(
+                    f'<div class="pageinfo">Viser {start+1}–{min(start+per_page, len(filtered))} av {len(filtered)} videoer</div>',
+                    unsafe_allow_html=True,
+                )
+            with fr:
+                if total_pages > 1:
+                    pages = _page_window(page, total_pages)
+                    cols = st.columns([0.8] + [1.0] * len(pages) + [0.8])
+                    with cols[0]:
+                        if st.button("‹", key="pg_p", type="secondary", disabled=page <= 1):
+                            st.session_state.lib_page = page - 1
                             st.rerun()
-                with cols[-1]:
-                    if st.button("›", key="pg_n", type="secondary", disabled=page >= total_pages):
-                        st.session_state.lib_page = page + 1
-                        st.rerun()
+                    for j, p in enumerate(pages):
+                        with cols[1 + j]:
+                            if st.button(
+                                str(p),
+                                key=f"pg_{p}",
+                                type="primary" if p == page else "secondary",
+                            ):
+                                st.session_state.lib_page = p
+                                st.rerun()
+                    with cols[-1]:
+                        if st.button("›", key="pg_n", type="secondary", disabled=page >= total_pages):
+                            st.session_state.lib_page = page + 1
+                            st.rerun()
     else:
         st.info("Ingen videoer matcher filteret.")
 
@@ -1740,7 +1736,7 @@ def _detail(video, analysis):
 # MAIN
 # ─────────────────────────────────────────────────────────────────
 def main():
-    st.iframe(_SIDEBAR_JS, height=1)
+    _topbar()
     _sidebar()
     page = st.session_state.page
     if page == "oversikt":

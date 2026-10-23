@@ -70,7 +70,7 @@ I tillegg til CLI-et finnes det en plattform: en web-UI der du sender videoer (l
 python src/cli.py platform
 ```
 
-starter alt med én kommando: API-serveren, worker-en og dashboardet (Streamlit, mørkt tema, topp-tabs: **Send · Bibliotek · Søk · Syntese · Ranking · Eksport**). Du kan også kjøre delene hver for seg i egne terminaler:
+starter alt med én kommando: API-serveren, worker-en og dashboardet (Streamlit, mørkt tema, sidemeny: **Oversikt · Bibliotek · Kø · Søk · Syntese · Ranking · Eksport**). Du kan også kjøre delene hver for seg i egne terminaler:
 
 | Kommando | Virkning |
 |---|---|
@@ -80,7 +80,7 @@ starter alt med én kommando: API-serveren, worker-en og dashboardet (Streamlit,
 | `bot` | Telegram-sendekanalen (long polling – krever ingen offentlig URL). |
 
 **Sende videoer:**
-- **Web-UI**: fanen «📥 Send» – lim inn lenker (YouTube/TikTok/Instagram) og/eller dra inn videofiler, velg hvilke pipeline-trinn som skal kjøre, trykk Send. Køen oppdateres live i vinduet.
+- **Web-UI**: «Oversikt» – lim inn lenker (YouTube/TikTok/Instagram) og/eller dra inn videofiler, velg hvilke pipeline-trinn som skal kjøre, trykk Send. Køen oppdateres live i vinduet.
 - **Telegram**: lag en bot med `@BotFather`, sett `TELEGRAM_BOT_TOKEN` og `TELEGRAM_ALLOWED_IDS` (finn ID-en din hos `@userinfobot`) i `.env`, kjør `python src/cli.py bot`. Del en TikTok/IG-video til Telegram → velg boten, eller lim inn en lenke, eller send en fil (opp til ~19 MB). Kommandoer i chatten: `/status`, `/search <term>`, `/cost`. **Tom allow-list = boten svarer på ingen** (sikker standard).
 - **API** (for fremtidige klienter, f.eks. en PWA): `POST /api/videos` med JSON `{"urls": [...], "options": {...}}` eller multipart (felt `urls` + filfelt `files`); `GET /api/jobs`, `GET /api/events` (live via Server-Sent Events), `GET /api/videos`, `GET /api/search?q=`, `GET /api/health`.
 
@@ -123,7 +123,7 @@ python src/cli.py dashboard
 | `synthesize [--force]` | Lag ÉN samlet syntese over alle analyserte videoer: felles tema, motsetninger og unik kunnskap. Én modellkall med kostnadsestimat; lastes fra cache uten `--force`. |
 | `export` | Eksporter alle analyserte videoer som Markdown-notater (med YAML-metadata og klikkbare kildelenker til video + tidsstempel), plus `INDEKS.md` (syntese + rangert videoliste) og `KUNNSKAP.md` (kompakt, deduplisert kunnskapskonsentrat optimert for inntasting som kontekst til en språkmodell). Ingen modellkall; skriver til `data/exports/markdown/`. |
 | `status` | Viser lagret behandlingsstatus. |
-| `dashboard` | Starter plattform-UI-et (Streamlit): Send (lenker/filer + live-kø), Bibliotek, Søk, Syntese, Ranking og Eksport. Samme UI som `platform`, men uten API og worker. |
+| `dashboard` | Starter plattform-UI-et (Streamlit): Oversikt (lenker/filer + live-kø), Bibliotek, Kø, Søk, Syntese, Ranking og Eksport. Samme UI som `platform`, men uten API og worker. |
 
 Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt heltall.
 
@@ -149,7 +149,7 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 - **YouTube, TikTok og Instagram**: oppdagelse og transkribering støtter alle tre. YouTube kan bruke undertekster (`transcripts`) eller Whisper (`transcribe`). TikTok/Instagram har ingen undertekst-API, så `transcripts` hoppes over automatisk for disse — bruk `transcribe` (Whisper) der. Kildelenker i notatene er plattform-tilpasset: YouTube har tidsstempel-dype-lenker, mens TikTok/Instagram lenker til den originale URL-en (uten hopp). Instagram kan kreve cookies (sett `YOUTUBE_COOKIES_FILE`).
 - **Tekst på skjermen (OCR)**: pipeline-en leser som standard **kun lyden**, så tekst/kode/tall som *vises* på skjermen går ellers tapt. `screen-text` dekker dette ved å laste ned videoen (begrenset til 720p — mer enn nok for OCR), uttrekke frames med ffmpeg og kjøre OCR. Den er **valgfri** (opt-in) og legger ingen omkostninger på den vanlige lyd-banen: tunge avhengigheter (OCR-motoren) importeres bare når funksjonen brukes, og videoen slettes etterpå med mindre `--keep-media` brukes. Fanges teksten, meldes den inn i analysen som en egen kanal («TEKST PÅ SKJERMEN») — bare for videoer som faktisk har fanget skjermt tekst. Kjør `screen-text` **før** `analyze` dersom du vil at OCR-teksten skal tas med. easyocr bruker GPU automatisk dersom CUDA-versjonen av torch er installert (for Windows: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130`), ellers CPU. Nye yt-dlp-versjoner krever et JavaScript-runtime for videodownloads fra YouTube: `winget install DenoLand.Deno`.
 - **Forståelse av skjermen (visjonsmodell)**: OCR leser bare tekst. `describe-frames` går et steg videre og spør en multimodal modell om å *beskrive* hva som vises (kode-layout, diagrammer, UI), noe OCR ikke greier. Den er også **valgfri og kostnadsbegrenset** (maks `VISION_MAX_FRAMES` jevnt fordelt frames per video) for å unngå store visjonskostnader. Standard er **lokal Ollama** (gratis, `VISION_MODEL=llava`); `VISION_PROVIDER=api` bruker et OpenAI-kompatibelt visjons-endepunkt som mottar bildeinnhold (f.eks. NTNUs gratis IDUN-modeller, eller Ollama som API). Beskrivelsene meldes inn i analysen som «BESKRIVELSE AV SKJERMEN» — bare for videoer som faktisk har fanget dem. Kjør `describe-frames` **før** `analyze`.
-- Søk i oversikten gjelder tittel og kanal. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
+- Toppfeltet søker etter tittel og kanal i Bibliotek og lar deg gå direkte til «Legg til videoer». Bibliotek beholder plattform- og statusfiltre, vurdering, sortering og paginering. Temavisningen er foreløpig en plassholder; hjelpefunksjonene i `cross_video.py` er ikke koblet til en full temavisning.
 
 ## Miljøvariabler
 
