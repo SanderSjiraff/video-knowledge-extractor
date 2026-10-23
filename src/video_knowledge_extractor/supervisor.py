@@ -44,6 +44,10 @@ MAX_RESTART_DELAY = 120.0
 # An exit faster than this many seconds after start counts as a fast crash
 # (crash-loop) and increases the restart delay.
 FAST_CRASH_WINDOW = 60.0
+# The worker touches this file every ~30s while it is alive and making
+# progress. If it goes stale the worker is considered hung and is killed.
+WORKER_HEARTBEAT_FILE = ROOT / "data" / "run" / "worker.heartbeat"
+WORKER_HANG_TIMEOUT = 120.0
 
 
 def _log(msg: str) -> None:
@@ -104,6 +108,15 @@ def _service_running(name: str) -> bool:
     return _external_python_running(f"cli.py {name}")
 
 
+def _worker_heartbeat_stale() -> bool:
+    """True when the worker's heartbeat file is missing or older than the timeout."""
+    try:
+        last = WORKER_HEARTBEAT_FILE.stat().st_mtime
+    except OSError:
+        return True
+    return (time.time() - last) > WORKER_HANG_TIMEOUT
+
+
 def _spawn(name: str) -> subprocess.Popen:
     LOGS.mkdir(parents=True, exist_ok=True)
     log_file = open(LOGS / f"{name}.log", "ab")
@@ -155,7 +168,18 @@ def _supervise_one(
     """Check one service: restart a dead child of ours, or start it if missing."""
     proc = children.get(name)
     if proc is not None and proc.poll() is None:
-        return  # still running
+        if name == "worker":
+            # A worker can hang (process alive, nothing happening): the
+            # heartbeat file proves liveness. Kill it so the normal
+            # exit/restart path below takes over.
+            age = time.monotonic() - started_at[name]
+            if age >= WORKER_HANG_TIMEOUT and _worker_heartbeat_stale():
+                _log(f"worker appears hung (no heartbeat for {WORKER_HANG_TIMEOUT:.0f}s) - killing for restart")
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        return  # still running (or just killed; the exit is picked up next poll)
     if proc is not None:
         age = time.monotonic() - started_at.pop(name)
         children.pop(name, None)

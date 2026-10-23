@@ -13,6 +13,7 @@ transcription stops the job as failed.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import threading
 import time
@@ -33,10 +34,109 @@ from .discovery import (
     enrich_video_metadata,
     extract_video_id,
 )
-from .jobs import claim_next_job, fail_job, update_job
+from .jobs import claim_next_job, fail_job, reclaim_orphaned_jobs, update_job
 from .models import Video, VideoStatus
 
 console = Console()
+
+HEARTBEAT_INTERVAL = 30.0
+# A single job running longer than this is considered stuck (a legitimate
+# job — even a long video — finishes well inside this).  The watchdog fails
+# the job and exits the worker so the supervisor can restart it.
+MAX_JOB_SECONDS = 45 * 60
+
+
+class _CurrentJob:
+    """What the main worker thread is doing right now (watchdog input)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._job_id: Optional[str] = None
+        self._label = ""
+        self._started_at = 0.0
+
+    def start(self, job_id: str, label: str) -> None:
+        with self._lock:
+            self._job_id, self._label, self._started_at = job_id, label, time.monotonic()
+
+    def finish(self) -> None:
+        with self._lock:
+            self._job_id, self._label, self._started_at = None, "", 0.0
+
+    def snapshot(self) -> tuple[Optional[str], str, float]:
+        with self._lock:
+            return self._job_id, self._label, self._started_at
+
+
+def _heartbeat_path(data_dir: Path) -> Path:
+    return data_dir / "run" / "worker.heartbeat"
+
+
+def _start_heartbeat(data_dir: Path, interval: float = HEARTBEAT_INTERVAL) -> threading.Thread:
+    """Start a daemon thread that touches a heartbeat file while the worker lives.
+
+    The supervisor reads the file's mtime and restarts the worker when the
+    heartbeat goes stale — that catches a worker that is still alive but hung
+    (for example inside a stuck network call or a wedged GPU op).
+    """
+
+    def _beat() -> None:
+        path = _heartbeat_path(data_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            try:
+                path.write_text(f"{time.time():.0f}\n", encoding="utf-8")
+            except OSError:
+                pass
+            time.sleep(interval)
+
+    thread = threading.Thread(target=_beat, name="worker-heartbeat", daemon=True)
+    thread.start()
+    return thread
+
+
+def _start_job_watchdog(
+    data_dir: Path,
+    current: _CurrentJob,
+    max_job_seconds: float = MAX_JOB_SECONDS,
+    check_interval: float = 60.0,
+) -> threading.Thread:
+    """Restart the worker when a single job runs longer than *max_job_seconds*.
+
+    A stuck job (a wedged network call or GPU op) blocks the main loop forever
+    while the heartbeat thread keeps beating, so the supervisor cannot see
+    it.  Failing the job and exiting immediately makes the supervisor
+    restart the worker, whose startup reclaim re-queues the job.
+    """
+
+    def _watch() -> None:
+        while True:
+            time.sleep(check_interval)
+            job_id, label, started = current.snapshot()
+            if job_id is None or started <= 0:
+                continue
+            age = time.monotonic() - started
+            if age <= max_job_seconds:
+                continue
+            console.print(
+                f"[red]Job {job_id[:8]} ({label}) has run {age / 60:.0f} min - "
+                f"watchdog gives up: failing the job and restarting the worker.[/red]"
+            )
+            try:
+                fail_job(
+                    job_id,
+                    f"Jobben tok for lang tid (over {max_job_seconds / 60:.0f} min) - worker ble restartet",
+                    data_dir=data_dir,
+                )
+            except Exception:  # noqa: BLE001 - the exit below is what matters
+                pass
+            # Hard exit: the wedged main thread cannot be unblocked.  The
+            # supervisor restarts us and the startup reclaim re-queues.
+            os._exit(1)
+
+    thread = threading.Thread(target=_watch, name="worker-job-watchdog", daemon=True)
+    thread.start()
+    return thread
 
 
 class JobAborted(Exception):
@@ -357,6 +457,15 @@ def worker_loop(
     data_dir = data_dir or Config.DATA_DIR
     init_db(data_dir)
     Config.ensure_dirs()
+    current = _CurrentJob()
+    _start_heartbeat(data_dir)
+    _start_job_watchdog(data_dir, current)
+    reclaimed = reclaim_orphaned_jobs(data_dir)
+    if reclaimed:
+        console.print(
+            f"[yellow]Set {len(reclaimed)} fastlåst(e) jobb(er) tilbake i kø "
+            f"(eier-workeren var ikke lenger i live).[/yellow]"
+        )
     console.print("[bold blue]Worker started — waiting for jobs (Ctrl+C to stop)[/bold blue]")
     while stop_event is None or not stop_event.is_set():
         job = claim_next_job(data_dir=data_dir)
@@ -368,6 +477,7 @@ def worker_loop(
                 slept += 0.2
             continue
         console.print(f"\n[bold cyan]Job {job['job_id'][:8]} ({job['platform']}):[/bold cyan] {job['title'] or job['url']}")
+        current.start(job["job_id"], job["platform"])
         try:
             process_job(job, data_dir=data_dir)
         except JobAborted as exc:
@@ -376,3 +486,5 @@ def worker_loop(
         except Exception as exc:  # noqa: BLE001 - a job must never kill the worker
             fail_job(job["job_id"], str(exc), data_dir=data_dir)
             console.print(f"  [red]Job failed:[/red] {exc}")
+        finally:
+            current.finish()

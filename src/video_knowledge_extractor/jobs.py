@@ -320,6 +320,38 @@ def fail_job(job_id: str, error: str, data_dir: Path = Path("data")) -> None:
     update_job(job_id, status="failed", error_message=error[:500], data_dir=data_dir)
 
 
+# Stages a worker reports while actively processing a job (not queued/terminal).
+IN_FLIGHT_STAGES = ("discovering", "transcribing", "ocr", "vision", "analyzing", "embedding")
+
+
+def reclaim_orphaned_jobs(data_dir: Path = Path("data")) -> list[str]:
+    """Reset in-flight jobs back to the queue.  Returns the reclaimed job ids.
+
+    Called when a worker starts up: any job sitting in an in-flight stage was
+    owned by a worker that is no longer alive (it crashed, was killed, or was
+    hung and restarted), so it can never finish on its own.  Re-queueing is
+    safe because every pipeline stage is idempotent (``force=False``) — an
+    already-finished part of the job is simply skipped on the re-run.
+    """
+    init_jobs_table(data_dir)
+    placeholders = ", ".join("?" for _ in IN_FLIGHT_STAGES)
+    now = _now()
+    with get_connection(data_dir) as conn:
+        rows = conn.execute(
+            f"SELECT job_id FROM jobs WHERE status IN ({placeholders})",
+            IN_FLIGHT_STAGES,
+        ).fetchall()
+        if rows:
+            conn.execute(
+                f"UPDATE jobs SET status = 'queued', updated_at = ?, "
+                "note = 'Worker ble startet pa nytt - jobben satt tilbake i ko' "
+                f"WHERE status IN ({placeholders})",
+                [now, *IN_FLIGHT_STAGES],
+            )
+            conn.commit()
+    return [r["job_id"] for r in rows]
+
+
 def _row_to_job(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "job_id": row["job_id"],
