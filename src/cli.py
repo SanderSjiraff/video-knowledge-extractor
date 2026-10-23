@@ -348,6 +348,19 @@ def bot() -> None:
 
 
 @cli.command()
+def supervisor() -> None:
+    """Keep api + worker + bot + dashboard running (self-restarting).
+
+    Normally started by launcher.pyw / start-platform.bat as a detached
+    process, so no terminal windows are needed. Restarts any service that
+    stops; service logs land in data/logs/.
+    """
+    from video_knowledge_extractor.supervisor import supervise
+
+    supervise()
+
+
+@cli.command()
 def status() -> None:
     """Show current processing status."""
     print_status()

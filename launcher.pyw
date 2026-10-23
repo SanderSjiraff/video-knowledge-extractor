@@ -1,10 +1,13 @@
 """VKE Platform – desktop launcher.
 
 Double-click (or run the built "VKE Platform.exe"):
-  1. Starts API + worker + Telegram bot + dashboard (if not already running).
+  1. Starts the supervisor (if not already running). The supervisor keeps
+     API + worker + Telegram bot + dashboard running, and restarts any of
+     them automatically if they stop. No terminal windows are needed.
   2. Opens the dashboard in your browser.
 
-Service output is written to data/logs/<service>.log.
+Service output is written to data/logs/<service>.log (the supervisor's own
+log is data/logs/supervisor.log).
 
 Set VKE_NO_BROWSER=1 / VKE_NO_POPUP=1 to skip those steps (for testing).
 """
@@ -27,8 +30,8 @@ else:
 
 VENV = Path(r"C:\vke_venv\Scripts")
 PYTHON = VENV / "python.exe"
-STREAMLIT = VENV / "streamlit.exe"
 LOGS = ROOT / "data" / "logs"
+DASHBOARD_PORT = 8501
 # NB: 0x8 | 0x10 (DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP) fails with
 # WinError 87 (ERROR_INVALID_PARAMETER) on this Windows build. Use
 # DETACHED_PROCESS alone: the child is detached from any console, and the
@@ -85,18 +88,37 @@ def show_popup(url: str) -> None:
     root.mainloop()
 
 
-def main() -> None:
-    if not port_open(8501):
-        spawn("api", [str(PYTHON), "src/cli.py", "api"])
-        spawn("worker", [str(PYTHON), "src/cli.py", "worker"])
-        spawn("bot", [str(PYTHON), "src/cli.py", "bot"])
-        spawn("dashboard", [str(STREAMLIT), "run", "src/video_knowledge_extractor/dashboard.py"])
-        for _ in range(90):
-            if port_open(8501):
-                break
-            time.sleep(1)
+def supervisor_running() -> bool:
+    """True when a 'cli.py supervisor' process is already alive."""
+    if os.name != "nt":
+        return False
+    command = (
+        "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.CommandLine -like '*cli.py supervisor*' } | "
+        "Select-Object -ExpandProperty ProcessId"
+    )
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(out.stdout.strip())
 
-    target = "http://localhost:8501"
+
+def main() -> None:
+    if not supervisor_running():
+        spawn("supervisor", [str(PYTHON), "src/cli.py", "supervisor"])
+    # Wait for the dashboard (the supervisor starts it if it is missing).
+    for _ in range(120):
+        if port_open(DASHBOARD_PORT):
+            break
+        time.sleep(1)
+
+    target = f"http://localhost:{DASHBOARD_PORT}"
     if not os.environ.get("VKE_NO_BROWSER"):
         webbrowser.open(target)
     if not os.environ.get("VKE_NO_POPUP"):
