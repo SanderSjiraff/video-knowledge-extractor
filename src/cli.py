@@ -53,6 +53,69 @@ def discover(source: str, limit: int | None) -> None:
     run_discovery(source, limit=limit)
 
 
+@cli.command("sync-playlist")
+@click.argument("playlist_url")
+@click.option("--limit", type=click.IntRange(min=1), default=None,
+              help="Only consider the first N videos of the playlist")
+@click.option("--dry-run", is_flag=True,
+              help="Show what would be queued without touching the library")
+@click.option("--retry-failed", is_flag=True,
+              help="Also re-queue known videos whose earlier processing failed")
+def sync_playlist(playlist_url: str, limit: int | None, dry_run: bool, retry_failed: bool) -> None:
+    """Synchronize a YouTube playlist with the library.
+
+    Fetches the playlist and queues every video that is not in the library
+    yet (and not already in the queue). The worker then runs the full
+    pipeline on each queued job. Videos already analyzed are never queued
+    again, so re-running this is safe — e.g. from a Windows scheduled task:
+
+        python src/cli.py sync-playlist "https://www.youtube.com/playlist?list=..."
+    """
+    from rich.table import Table
+
+    from video_knowledge_extractor.playlist_sync import sync_playlist as _sync_playlist
+
+    try:
+        result = _sync_playlist(
+            playlist_url,
+            data_dir=Config.DATA_DIR,
+            limit=limit,
+            dry_run=dry_run,
+            retry_failed=retry_failed,
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    table = Table(title=f"Playlist sync — {len(result.fetched)} video(er) i spillelisten")
+    table.add_column("Handling", style="cyan", no_wrap=True)
+    table.add_column("Video")
+    for v in result.new:
+        action = "[green]legges i kø[/green]" if not dry_run else "[yellow]ville legge i kø[/yellow]"
+        table.add_row(action, f"{v.title or v.video_id} ({v.duration_formatted})")
+    for v in result.retried:
+        action = "[magenta]prøves på nytt[/magenta]" if not dry_run else "[yellow]ville prøve på nytt[/yellow]"
+        table.add_row(action, f"{v.title or v.video_id} ({v.duration_formatted})")
+    for v in result.in_queue:
+        table.add_row("[dim]allerede i kø[/dim]", v.title or v.video_id)
+    if len(result.new) or len(result.retried) or len(result.in_queue):
+        console.print(table)
+    else:
+        console.print("[cyan]Ingen nye videoer i spillelisten.[/cyan]")
+
+    if not result.fetched:
+        console.print("[yellow]Spillelisten ga ingen videoer (privat/slettet?).[/yellow]")
+        return
+
+    verb = "Ville kø" if dry_run else "Lagt i kø"
+    console.print(
+        f"[green]{verb} {len(result.new)} ny(e) video(er)[/green] "
+        f"(+ {len(result.retried)} forsøk på nytt), "
+        f"{len(result.in_queue)} allerede i kø, {len(result.known)} i biblioteket."
+    )
+    if not dry_run and result.jobs:
+        console.print("[cyan]Workeren behandler de innkøede videoene automatisk.[/cyan]")
+
+
 @cli.command()
 @click.option("--force", is_flag=True, help="Re-fetch all transcripts")
 @click.option("--cookies", type=click.Path(exists=True, dir_okay=False, readable=True),

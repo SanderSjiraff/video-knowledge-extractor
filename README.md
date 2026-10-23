@@ -188,11 +188,14 @@ La også worker-en kjøre, for eksempel via `platform`. Send en lenke eller fil 
 
 ```sh
 python src/cli.py discover "https://www.youtube.com/playlist?list=DIN_SPILLELISTE" --limit 5
+python src/cli.py sync-playlist "https://www.youtube.com/playlist?list=DIN_SPILLELISTE"
 python src/cli.py transcripts
 python src/cli.py cost
 python src/cli.py analyze --limit 2
 python src/cli.py export
 ```
+
+`sync-playlist` er den enkleste måten å holde biblioteket opptatt med en YouTube-spilleliste: den legger **kun nye** videoer i behandlingskøen (alt som allerede er i biblioteket eller køen hoppes over), og workeren behandler deretter transkribering, analyse og embeddings automatisk. Kommandoen er idempotent — kjør den så ofte du vil. For full automasjon kan du planlegge den i Windows (Opplagte oppgaver), eller kjøre `sync-playlist.bat` som følger i prosjektmappen (den logger til `data/logs/playlist_sync.log`).
 
 Hvis undertekster mangler, bruk `transcribe` før `analyze`. Se [CLI, avansert behandling og alle innstillinger](docs/REFERENCE.md), eller kjør `python src/cli.py --help`. På Windows uten aktivert miljø erstatter du `python` med `.\.venv\Scripts\python.exe`.
 
@@ -218,7 +221,7 @@ API-et er laget for lokal bruk av én person og har foreløpig ingen innlogging.
 - **Lokal lagring betyr ikke at alle modellkall er lokale.** I API-modus sendes innhold til valgt leverandør. OCR, visjon og embeddings kan ha egne endepunkter. Del aldri `.env`, cookies eller API-nøkler.
 - **Tilgang til videoer kan feile.** Private/slettede videoer, innlogging, plattformendringer og IP-blokkering kan hindre innhenting. Bruk innhold du har rett til å hente og behandle.
 - **Bildekaruseller har et eget løp.** TikTok-slideshows bruker OCR og visjon selv om disse er av for vanlige videoer. Instagram-bildeinnlegg støttes foreløpig ikke.
-- **Windows-launcherne er personlige oppsett.** `launcher.pyw` og `start-platform.bat` inneholder maskinspesifikke stier. Andre bør bruke CLI-kommandoene over, eller tilpasse stiene før bruk. Ingen ferdig `.exe` er nødvendig for å komme i gang.
+- **Windows-launcherne er personlige oppsett.** `launcher.pyw`, `start-platform.bat` og `sync-playlist.bat` inneholder maskinspesifikke stier (og spillelistelenken). Andre bør bruke CLI-kommandoene over, eller tilpasse stiene før bruk. Ingen ferdig `.exe` er nødvendig for å komme i gang.
 
 ## Feilsøking
 

@@ -22,6 +22,7 @@ python src/cli.py dashboard
 | Kommando | Virkning |
 |---|---|
 | `discover <kilde> --limit N` | Henter metadata fra en YouTube-playlist eller en tekstfil med én URL per linje. Støtter også TikTok- og Instagram-URL-er (tekstfil; ID hentes via yt-dlp). Duplikate video-ID-er slås sammen. |
+| `sync-playlist <playlist-URL> [--limit N] [--dry-run] [--retry-failed]` | **Automatisk spilllistsynk**: henter hele YouTube-playlisten og legger kun videoer som *ikke* finnes i biblioteket (og ikke allerede er i køen) i behandlingskøen — kildemerket `playlist-sync`. Workeren kjører deretter full pipeline på hver video. Sikker å kjøre på nytt: eksisterende videoer køes aldri på nytt. `--dry-run` viser hva som ville blitt køet uten å gjøre endringer; `--retry-failed` køer også kjente videoer med mislykket status på nytt. Kan kjøres planlagt (f.eks. Windows-oppgave) slik at nye videoer i spillelisten havner i biblioteket uten manuelt inngrep. |
 | `transcripts` | Henter undertekster og gjenbruker lagrede resultater. Prøver `yt-dlp` dersom primærmetoden ikke lykkes. |
 | `transcripts --force` | Henter undertekster på nytt. |
 | `transcribe [KILDE]` | Lokal reserve når YouTube-undertekst-API-et er IP-blokkert: laster ned lyden med `yt-dlp` og transkriberer den lokalt med Whisper (GPU/CUDA). Valg: `--model` (`tiny`/`base`/`small`/`medium`/`large-v3`), `--force`, `--no-keep-audio`. Skriver `.txt` og `.srt` til `data/transcripts/`. |
