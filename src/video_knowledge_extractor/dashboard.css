@@ -33,8 +33,6 @@ h1 { font-size: 48px !important; font-weight: 700 !important; letter-spacing: -1
 .stats-bar { background: #1a242e; border-color: #2a3743; border-radius: 8px; padding: 14px 24px; gap: 42px; }
 .stats-bar .stat { color: #bdcce0; font-size: 15px; }
 .stats-bar .stat b { font-weight: 400; }
-.st-key-topbar { padding-bottom: 16px; margin-bottom: 6px; border-bottom: 1px solid #263440; }
-.workspace-path { min-height: 40px; display: flex; align-items: center; color: #aebfd5; font-size: 14px; }
 [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div {
     background: #19232d !important; border-color: #30404f !important;
     border-radius: 7px !important;
@@ -88,21 +86,16 @@ h1 { font-size: 48px !important; font-weight: 700 !important; letter-spacing: -1
 .st-key-add_panel [data-testid="stExpander"] summary { padding-left: 0; }
 .st-key-library_table [data-testid="stHorizontalBlock"]:hover { background: #202e3b; }
 .st-key-library_table .stButton > button { white-space: nowrap; }
-.st-key-topbar[data-testid="stVerticalBlock"] {
-    background: transparent !important; border: none !important; border-bottom: 1px solid #293541 !important;
-    border-radius: 0 !important; padding: 0 0 16px !important;
-}
+
 [data-testid="stSidebar"] .stButton > button[kind="secondary"] {
     background: transparent !important; border: none !important;
 }
 .st-key-recent_table[data-testid="stVerticalBlock"], .st-key-library_table[data-testid="stVerticalBlock"] { gap: 0 !important; }
 .st-key-add_panel[data-testid="stVerticalBlock"], .st-key-queue_panel[data-testid="stVerticalBlock"] { padding: 20px 24px !important; }
-.st-key-topbar [data-baseweb="input"] input { padding-left: 38px !important; }
 [data-testid="stSidebarUserContent"] > [data-testid="stVerticalBlock"] { gap: 4px !important; }
 [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] style) { display: none; }
 [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding: 0 18px 20px !important; }
 [data-testid="stSidebar"] .stButton > button { margin: 0 !important; }
-.st-key-topbar [data-testid="stHorizontalBlock"] { margin: 0; }
 [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 4px !important; }
 [data-testid="stMarkdownContainer"]:has(> .cell),
 [data-testid="stMarkdownContainer"]:has(> .tbl-header),

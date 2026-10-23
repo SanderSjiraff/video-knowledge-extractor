@@ -20,6 +20,8 @@ def test_library_search_and_navigation(tmp_path, monkeypatch):
     save_transcript(Transcript("0", "no", False, [TranscriptSegment(0, 5, "Unik transkriptkunnskap")]), data_dir=Config.DATA_DIR)
     app = AppTest.from_file(str(dashboard), default_timeout=20).run()
     assert not app.exception
+    assert not any(b.key == "add_videos" for b in app.button)
+    assert not any("Arbeidsområde /" in m.value for m in app.markdown)
     assert not any(b.key in ("nav_sok", "nav_syntese", "nav_ranking", "nav_hjaelp") for b in app.button)
     assert not any(t.key == "global_search" for t in app.text_input)
     app.button(key="nav_bibliotek").click().run()
@@ -38,7 +40,7 @@ def test_library_search_and_navigation(tmp_path, monkeypatch):
     app.button(key="pg_n").click().run()
     assert not app.exception
     assert any("Viser 9–10 av 10" in m.value for m in app.markdown)
-    app.button(key="add_videos").click().run()
+    app.button(key="nav_oversikt").click().run()
     assert app.session_state.page == "oversikt"
     assert not app.exception
     for page in ("ko", "innsikt", "eksport"):

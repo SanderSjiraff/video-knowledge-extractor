@@ -569,17 +569,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _topbar():
-    with st.container(key="topbar"):
-        breadcrumb, action = st.columns([6, 1.1])
-        with breadcrumb:
-            label = dict(PAGES).get(st.session_state.page, "Oversikt")
-            st.markdown(f"<div class='workspace-path'>Arbeidsområde / {label}</div>", unsafe_allow_html=True)
-        with action:
-            if st.button("⊕  Legg til videoer", key="add_videos", use_container_width=True):
-                st.session_state.page = "oversikt"
-                st.rerun()
-
 # ─────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────
@@ -1671,7 +1660,6 @@ def _detail(video, analysis):
 # MAIN
 # ─────────────────────────────────────────────────────────────────
 def main():
-    _topbar()
     _sidebar()
     page = st.session_state.page
     if page == "oversikt":
