@@ -6,7 +6,7 @@ from streamlit.testing.v1 import AppTest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from video_knowledge_extractor.config import Config
-from video_knowledge_extractor.db import init_db, save_video, save_transcript
+from video_knowledge_extractor.db import init_db, save_video, save_transcript, get_connection
 from video_knowledge_extractor.models import Video, Transcript, TranscriptSegment
 
 
@@ -45,3 +45,18 @@ def test_library_search_and_navigation(tmp_path, monkeypatch):
         app.button(key=f"nav_{page}").click().run()
         assert app.session_state.page == page
         assert not app.exception
+    with get_connection(Config.DATA_DIR) as conn:
+        conn.execute("INSERT INTO analyses (video_id, summary_no, analyzed_at) VALUES (?, ?, ?)",
+                     ("0", "Et unikt sammendrag for analysevinduet", "2026-10-23"))
+        conn.commit()
+    app.button(key="nav_innsikt").click().run()
+    app.button(key="rank_5_0").click().run()
+    assert not app.exception
+    assert app.session_state.page == "innsikt"
+    assert any("Et unikt sammendrag for analysevinduet" in m.value for m in app.markdown)
+    app.session_state.full_ranking = True
+    app.run()
+    app.button(key="rank_None_0").click().run()
+    assert not app.exception
+    assert app.session_state.full_ranking is True
+    assert app.session_state.page == "innsikt"

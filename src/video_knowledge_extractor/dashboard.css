@@ -142,6 +142,21 @@ h1 { font-size: 48px !important; font-weight: 700 !important; letter-spacing: -1
 .st-key-recent_table > div:has(> [data-testid="stHorizontalBlock"]) { border-bottom: 1px solid #2a3845; }
 .st-key-library_table > div:last-child, .st-key-recent_table > div:last-child { border-bottom: none; }
 .st-key-library_tabs .stButton > button p { font-size: 15px !important; }
+.st-key-overview_panels { align-items: stretch !important; }
+.st-key-overview_panels > div { flex: 1 1 0 !important; min-width: 0; }
+.st-key-overview_panels .st-key-add_panel,
+.st-key-overview_panels .st-key-queue_panel { height: 100%; box-sizing: border-box; }
+[data-testid="stDivider"] hr { border-color: #344554 !important; margin: 3px 0 !important; }
+.qrow, .oqrow { border-bottom: none; }
+.rank-number { font-size: 18px; font-weight: 700; color: #58a6ff; }
+[class*="st-key-insight_ranking_"] [data-testid="stVerticalBlock"] { gap: 2px !important; }
+[class*="st-key-insight_ranking_"] { gap: 6px !important; }
+[class*="st-key-insight_ranking_"] [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
+[class*="st-key-insight_ranking_"] hr { margin: 4px 0 !important; }
+[data-testid="stDialog"] [role="dialog"] { max-height: 88vh; overflow-y: auto; }
+@media (max-width: 800px) {
+    .st-key-overview_panels > div { flex-basis: 100% !important; }
+}
 @media (max-width: 1100px) {
     [data-testid="stSidebar"] { width: 210px !important; min-width: 210px !important; max-width: 210px !important; }
     .stMainBlockContainer { padding: 16px !important; }

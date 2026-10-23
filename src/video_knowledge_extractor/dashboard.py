@@ -736,10 +736,8 @@ def _overview():
         unsafe_allow_html=True,
     )
 
-    left, right = st.columns([2, 1], gap="medium")
-
-    with left:
-        with st.container(border=True, key="add_panel"):
+    with st.container(horizontal=True, key="overview_panels", gap="medium"):
+        with st.container(border=True, key="add_panel", height="stretch"):
             st.markdown('<div class="panel-title">Legg til videoer</div>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="panel-desc">Lim inn lenker fra YouTube, TikTok eller Instagram.</div>',
@@ -752,7 +750,7 @@ def _overview():
                 height=102,
                 key="ov_u",
             )
-            b1, spacer, b2 = st.columns([1.2, 2.2, 1.5])
+            b1, spacer, b2 = st.columns([1.4, 0.4, 1.7])
             with b1:
                 files = st.file_uploader(
                     "Last opp filer",
@@ -800,9 +798,7 @@ def _overview():
                 with c2:
                     st.checkbox("OCR (tekst på skjerm)", value=False, key="ov_r")
 
-    with right:
-        _eta_box()
-        with st.container(border=True, key="queue_panel"):
+        with st.container(border=True, key="queue_panel", height="stretch"):
             st.markdown('<div class="panel-title">Behandlingskø</div>', unsafe_allow_html=True)
             st.markdown(
                 '<div class="panel-desc">Øverst i lista behandles først (først inn – først ut).</div>',
@@ -811,6 +807,9 @@ def _overview():
             @st.fragment(run_every="20s")
             def _ov_live():
                 active = list_active_jobs(data_dir=Config.DATA_DIR)
+                eta_html = _eta_box_html(active)
+                if eta_html:
+                    st.markdown(eta_html, unsafe_allow_html=True)
                 if not active:
                     st.markdown(
                         """<div class="q-empty">
@@ -837,6 +836,8 @@ def _overview():
                 )
                 visible = active[:5]
                 for i, job in enumerate(visible, start=1):
+                    if i > 1:
+                        st.divider()
                     st.markdown(_ov_queue_row(job, i), unsafe_allow_html=True)
                 if len(active) > len(visible):
                     st.markdown(
@@ -1102,7 +1103,9 @@ def _queue():
                     unsafe_allow_html=True,
                 )
             else:
-                for j in active:
+                for i, j in enumerate(active):
+                    if i:
+                        st.divider()
                     rc1, rc2 = st.columns([23, 1], gap="small")
                     with rc1:
                         st.markdown(_job_row(j, show_progress=True), unsafe_allow_html=True)
@@ -1140,7 +1143,9 @@ def _queue():
             return
 
         with st.container(border=True):
-            for j in finished:
+            for i, j in enumerate(finished):
+                if i:
+                    st.divider()
                 fc1, fc2 = st.columns([23, 1], gap="small")
                 with fc1:
                     st.markdown(_job_row(j, show_progress=False), unsafe_allow_html=True)
@@ -1407,8 +1412,7 @@ def _temakart():
                             use_container_width=True,
                             help=r.title,
                         ):
-                            st.session_state[f"d_{r.video_id}"] = True
-                            st.rerun()
+                            _insight_analysis(r.video_id)
 
 
 def _insights():
@@ -1417,24 +1421,15 @@ def _insights():
     st.subheader("Høyest rangert")
     st.caption("Praktisk verdi og relevans, justert for overlapp med andre videoer.")
     _ranking(limit=5)
-    with st.expander("Se hele rangeringen"):
-        _ranking()
+    with st.expander("Se hele rangeringen", key="full_ranking", on_change="rerun") as ranking:
+        if ranking.open:
+            _ranking()
     st.subheader("Samlet kunnskap")
     _synthesis()
 
 
 def _synthesis():
     _temakart()
-
-    # Video clicked in the topic map → show its overview + analysis here.
-    analyses_map = _load_analyses()
-    for v in get_all_videos(data_dir=Config.DATA_DIR):
-        if st.session_state.get(f"d_{v.video_id}"):
-            _detail(v, analyses_map.get(v.video_id))
-            if st.button("✕ Lukk analyse", key=f"cl_s_{v.video_id}"):
-                st.session_state.pop(f"d_{v.video_id}", None)
-                st.rerun()
-            break
 
     if st.button("Generer / oppdater syntese", type="primary"):
         with st.spinner("Genererer syntese..."):
@@ -1500,6 +1495,16 @@ def _synthesis():
 # ─────────────────────────────────────────────────────────────────
 # RANKING
 # ─────────────────────────────────────────────────────────────────
+@st.dialog("Analyse", width="large")
+def _insight_analysis(video_id):
+    st.caption("Lukk med × eller Esc for å gå tilbake til samme sted i Innsikt.")
+    video = next((v for v in get_all_videos(data_dir=Config.DATA_DIR) if v.video_id == video_id), None)
+    if video is None:
+        st.info("Videoen finnes ikke lenger i biblioteket.")
+        return
+    _detail(video, _load_analyses().get(video_id))
+
+
 def _ranking(limit=None):
     analyses = list(_load_analyses().values())
     if not analyses:
@@ -1508,20 +1513,22 @@ def _ranking(limit=None):
     videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
     scored = [(a, (a["practical_score"] * a["relevance_score"]) / (a["redundancy_score"] + 1)) for a in analyses]
     scored.sort(key=lambda x: x[1], reverse=True)
-    with st.container(border=True):
+    with st.container(border=True, key=f"insight_ranking_{limit}"):
         for rank, (a, score) in enumerate(scored[:limit], 1):
+            if rank > 1:
+                st.divider()
             v = videos.get(a["video_id"])
             title = v.title if v else a["video_id"]
-            st.markdown(
-                f'''<div class="cell tbline" style="gap:16px; padding:12px 4px;">
-                    <div style="font-size:18px; font-weight:800; color:#388bfd; min-width:28px; text-align:center;">{rank}</div>
-                    <div style="flex:1;">
-                        <div style="font-weight:700; color:#e6edf3; font-size:14px;">{title}</div>
-                        <div style="font-size:12px; color:#8b949e; margin-top:2px;">verdi: {score:.1f} · praktisk {a["practical_score"]} · relevans {a["relevance_score"]}</div>
-                    </div>
-                </div>''',
-                unsafe_allow_html=True,
-            )
+            number, thumbnail, content = st.columns([0.4, 1, 8], vertical_alignment="center")
+            with number:
+                st.markdown(f"<span class='rank-number'>{rank}</span>", unsafe_allow_html=True)
+            with thumbnail:
+                if v:
+                    st.markdown(_thumb_html(v), unsafe_allow_html=True)
+            with content:
+                if st.button(title, key=f"rank_{limit}_{a['video_id']}", type="tertiary", help="Åpne analyse"):
+                    _insight_analysis(a["video_id"])
+                st.caption(f"Verdi {score:.1f} · Praktisk {a['practical_score']} · Relevans {a['relevance_score']}")
 
 
 # ─────────────────────────────────────────────────────────────────
