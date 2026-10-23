@@ -25,7 +25,6 @@ html, body, .stApp {
     background: #202d39 !important; color: #f6f8fc !important;
 }
 [data-testid="stSidebar"] .stButton > button::before { width: 22px; height: 22px; margin-right: 22px; }
-.st-key-nav_hjaelp { margin-top: 20px; }
 h1 { font-size: 48px !important; font-weight: 700 !important; letter-spacing: -1.3px !important; margin-top: 6px !important; padding: 0 !important; }
 .lead { font-size: 20px; color: #b6c9e1; margin-bottom: 0; }
 .sub-lead { font-size: 14px; color: #b6c9e1; margin-bottom: 4px; }
@@ -35,6 +34,7 @@ h1 { font-size: 48px !important; font-weight: 700 !important; letter-spacing: -1
 .stats-bar .stat { color: #bdcce0; font-size: 15px; }
 .stats-bar .stat b { font-weight: 400; }
 .st-key-topbar { padding-bottom: 16px; margin-bottom: 6px; border-bottom: 1px solid #263440; }
+.workspace-path { min-height: 40px; display: flex; align-items: center; color: #aebfd5; font-size: 14px; }
 [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div {
     background: #19232d !important; border-color: #30404f !important;
     border-radius: 7px !important;

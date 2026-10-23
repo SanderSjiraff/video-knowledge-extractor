@@ -64,14 +64,16 @@ def _ensure(key, default):
 _ensure("page", "oversikt")
 _ensure("lib_page", 1)
 _ensure("lib_tab", "alle")
+if st.session_state.page in ("syntese", "ranking"):
+    st.session_state.page = "innsikt"
+elif st.session_state.page == "sok":
+    st.session_state.page = "bibliotek"
 
 PAGES = [
     ("oversikt", "Oversikt"),
     ("bibliotek", "Bibliotek"),
     ("ko", "Kø"),
-    ("sok", "Søk"),
-    ("syntese", "Syntese"),
-    ("ranking", "Ranking"),
+    ("innsikt", "Innsikt"),
     ("eksport", "Eksport"),
 ]
 
@@ -96,11 +98,8 @@ NAV_ICONS = {
     "oversikt": '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
     "bibliotek": '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     "ko": '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
-    "sok": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-    "syntese": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
-    "ranking": '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    "innsikt": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
     "eksport": '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
-    "hjaelp": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
 }
 
 
@@ -133,7 +132,7 @@ def _mask_rule(key):
 """
 
 
-NAV_ICONS_CSS = "".join(_mask_rule(k) for k, _ in PAGES) + _mask_rule("hjaelp")
+NAV_ICONS_CSS = "".join(_mask_rule(k) for k, _ in PAGES)
 
 _SEARCH_ICON_MASK = _mask_svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>')
 _UPLOAD_ICON_MASK = _mask_svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>')
@@ -570,21 +569,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _global_search_changed():
-    st.session_state["ls"] = st.session_state.global_search.strip()
-    st.session_state.lib_page = 1
-    if st.session_state["ls"]:
-        st.session_state.page = "bibliotek"
-
-
 def _topbar():
     with st.container(key="topbar"):
-        search, action = st.columns([6, 1.1])
-        with search:
-            st.text_input(
-                "Søk i videoene dine", placeholder="Søk i videoene dine",
-                label_visibility="collapsed", key="global_search", on_change=_global_search_changed,
-            )
+        breadcrumb, action = st.columns([6, 1.1])
+        with breadcrumb:
+            label = dict(PAGES).get(st.session_state.page, "Oversikt")
+            st.markdown(f"<div class='workspace-path'>Arbeidsområde / {label}</div>", unsafe_allow_html=True)
         with action:
             if st.button("⊕  Legg til videoer", key="add_videos", use_container_width=True):
                 st.session_state.page = "oversikt"
@@ -727,12 +717,6 @@ def _sidebar():
         ):
             st.session_state.page = key
             st.rerun()
-    st.sidebar.markdown(
-        '<div style="margin-top: 34px; height: 1px; background: #1f2733; margin-left: 10px; margin-right: 10px;"></div>',
-        unsafe_allow_html=True,
-    )
-    if st.sidebar.button("Hjelp", key="nav_hjaelp", type="secondary", use_container_width=True):
-        st.toast("Legg til videoer → vent på analyse → finn kunnskapen i Søk, Syntese og Ranking.")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1231,8 +1215,10 @@ def _library():
         rec_map = {"Se": "watch", "Skum": "skim", "Slep": "skip"}
         filtered = [v for v in filtered if analyses.get(v.video_id, {}).get("recommendation") == rec_map[rec_f]]
     if q.strip():
-        ql = q.lower()
-        filtered = [v for v in filtered if ql in (v.title or "").lower() or ql in (v.channel or "").lower()]
+        ql = q.strip().lower()
+        content_hits = {hit["video_id"] for hit in search_transcripts(q.strip(), limit=len(videos) or 1, data_dir=Config.DATA_DIR)}
+        filtered = [v for v in filtered if ql in (v.title or "").lower() or ql in (v.channel or "").lower()
+                    or ql in analyses.get(v.video_id, {}).get("summary_no", "").lower() or v.video_id in content_hits]
     if st.session_state.lib_tab == "anbefalt":
         filtered = [v for v in filtered if analyses.get(v.video_id, {}).get("recommendation") == "watch"]
     elif st.session_state.lib_tab == "oppsummert":
@@ -1359,72 +1345,6 @@ def _library():
 
 
 # ─────────────────────────────────────────────────────────────────
-# SEARCH
-# ─────────────────────────────────────────────────────────────────
-def _search():
-    st.markdown("<h1>Søk</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='lead'>Søk i transkripter og analyser.</p>", unsafe_allow_html=True)
-    query = st.text_input("Søksterm", placeholder="Søksterm", label_visibility="collapsed", key="sq")
-    if not query.strip():
-        st.info("Skriv et søkeord for å søke i transkriptene.")
-        return
-
-    videos = {v.video_id: v for v in get_all_videos(data_dir=Config.DATA_DIR)}
-
-    with st.container(border=True):
-        st.markdown('<div class="panel-title">Nøkkelordsøk (SQLite FTS5)</div>', unsafe_allow_html=True)
-        hits = search_transcripts(query, limit=50, data_dir=Config.DATA_DIR)
-        if not hits:
-            st.warning(f"Ingen treff for «{query}».")
-        else:
-            st.markdown(
-                f'<p style="color:#8b949e; font-size:13px; margin-bottom:10px;">{len(hits)} treff</p>',
-                unsafe_allow_html=True,
-            )
-            for hit in hits:
-                vid = videos.get(hit["video_id"])
-                link = ""
-                if vid and vid.platform == "youtube":
-                    link = (
-                        f'<a href="https://www.youtube.com/watch?v={hit["video_id"]}" target="_blank" '
-                        'style="font-size:12px; color:#388bfd;">Åpne video →</a>'
-                    )
-                st.markdown(
-                    f'''<div class="q-card">
-                        <div class="title">{vid.title if vid else hit["video_id"]}</div>
-                        <div style="font-size:12px; color:#8b949e; margin-bottom:4px;">{vid.channel if vid else ""}</div>
-                        <div style="font-size:13px; color:#c9d1d9; line-height:1.5;">{hit.get("snippet", "")}</div>
-                        {link}
-                    </div>''',
-                    unsafe_allow_html=True,
-                )
-
-    from video_knowledge_extractor.embeddings import embeddings_configured, search_embeddings
-
-    if embeddings_configured():
-        with st.container(border=True):
-            st.markdown('<div class="panel-title">Semantisk søk (betydning)</div>', unsafe_allow_html=True)
-            try:
-                sem = search_embeddings(query, data_dir=Config.DATA_DIR, top_k=10)
-            except Exception as exc:
-                st.error(f"Feilet: {exc}")
-                return
-            if not sem:
-                st.info("Ingen embeddings ennå.")
-            else:
-                for r in sem:
-                    vid = videos.get(r["video_id"])
-                    st.markdown(
-                        f'''<div class="q-card">
-                            <div class="title">{vid.title if vid else r["video_id"]}</div>
-                            <div style="font-size:11px; color:#8b949e; margin-bottom:2px;">chunk {r["chunk_index"]} · likhet {r["score"]:.3f}</div>
-                            <div style="font-size:13px; color:#c9d1d9;">{r["snippet"][:300]}</div>
-                        </div>''',
-                        unsafe_allow_html=True,
-                    )
-
-
-# ─────────────────────────────────────────────────────────────────
 # SYNTHESIS
 # ─────────────────────────────────────────────────────────────────
 def _temakart():
@@ -1491,9 +1411,19 @@ def _temakart():
                             st.rerun()
 
 
+def _insights():
+    st.markdown("<h1>Innsikt</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='lead'>De beste videoene og kunnskapen som binder dem sammen.</p>", unsafe_allow_html=True)
+    st.subheader("Høyest rangert")
+    st.caption("Praktisk verdi og relevans, justert for overlapp med andre videoer.")
+    _ranking(limit=5)
+    with st.expander("Se hele rangeringen"):
+        _ranking()
+    st.subheader("Samlet kunnskap")
+    _synthesis()
+
+
 def _synthesis():
-    st.markdown("<h1>Syntese</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='lead'>Samlet analyse av hele biblioteket ditt.</p>", unsafe_allow_html=True)
     _temakart()
 
     # Video clicked in the topic map → show its overview + analysis here.
@@ -1570,9 +1500,7 @@ def _synthesis():
 # ─────────────────────────────────────────────────────────────────
 # RANKING
 # ─────────────────────────────────────────────────────────────────
-def _ranking():
-    st.markdown("<h1>Ranking</h1>", unsafe_allow_html=True)
-    st.markdown("<p class='lead'>Videoer rangert etter verdi (praktisk × relevans).</p>", unsafe_allow_html=True)
+def _ranking(limit=None):
     analyses = list(_load_analyses().values())
     if not analyses:
         st.info("Ingen analyser ennå.")
@@ -1581,7 +1509,7 @@ def _ranking():
     scored = [(a, (a["practical_score"] * a["relevance_score"]) / (a["redundancy_score"] + 1)) for a in analyses]
     scored.sort(key=lambda x: x[1], reverse=True)
     with st.container(border=True):
-        for rank, (a, score) in enumerate(scored, 1):
+        for rank, (a, score) in enumerate(scored[:limit], 1):
             v = videos.get(a["video_id"])
             title = v.title if v else a["video_id"]
             st.markdown(
@@ -1745,12 +1673,8 @@ def main():
         _library()
     elif page == "ko":
         _queue()
-    elif page == "sok":
-        _search()
-    elif page == "syntese":
-        _synthesis()
-    elif page == "ranking":
-        _ranking()
+    elif page == "innsikt":
+        _insights()
     elif page == "eksport":
         _export()
     else:
