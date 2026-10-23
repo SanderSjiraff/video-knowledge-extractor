@@ -81,6 +81,10 @@ class Config:
             raise ValueError("Qwen3.8-27B-FP8 does not support high reasoning effort")
 
     COOKIES_FILE: str | None = os.getenv("YOUTUBE_COOKIES_FILE")
+    # Optional GitHub personal access token for repo ingestion.
+    # Empty = anonymous API (60 calls/hour/IP); with a token you get
+    # 5000 calls/hour and access to private repos.
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "").strip()
 
     # Platform: API server and Telegram send-channel.
     API_HOST: str = os.getenv("API_HOST", "127.0.0.1")

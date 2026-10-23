@@ -2,7 +2,7 @@
 
 **Gjør lagrede videoer til et søkbart kunnskapsbibliotek.**
 
-VKE er et lokalt Python-verktøy for deg som lagrer nyttige videoer, men ønsker å finne igjen innholdet uten å se alt på nytt. Legg inn lenker fra YouTube, TikTok og Instagram, eller last opp en fil. VKE henter innholdet, transkriberer ved behov og bruker en språkmodell til å lage norske sammendrag, innsikter og konkrete steg du kan bruke videre.
+VKE er et lokalt Python-verktøy for deg som lagrer nyttige videoer og repos, men ønsker å finne igjen innholdet uten å se alt på nytt. Legg inn lenker fra YouTube, TikTok, Instagram og GitHub-repos, eller last opp en fil. VKE henter innholdet, transkriberer ved behov og bruker en språkmodell til å lage norske sammendrag, innsikter og konkrete steg du kan bruke videre.
 
 Du får et nettleserbasert dashboard med bibliotek, behandlingskø, anbefalinger og samlet kunnskap på tvers av videoer. Metadata og analyser lagres lokalt i SQLite. Analyse kan kjøres med lokal Ollama eller et OpenAI-kompatibelt API.
 
@@ -20,9 +20,9 @@ Analysene er modellgenererte utkast. VKE kontrollerer sitater mot transkriptet, 
 ## Slik fungerer det
 
 ```text
-Videolenke eller fil
+Videolenke, GitHub-repo eller fil
         ↓
-Metadata og undertekster / lokal Whisper-transkribering
+Metadata og undertekster / lokal Whisper-transkribering / repo-innhold (README + docs + kildekode)
         ↓
 Valgfri skjermtekst (OCR) og bildebeskrivelse
         ↓
@@ -31,7 +31,7 @@ Norsk analyse: sammendrag, innsikter, verktøy og handlingssteg
 Bibliotek → Innsikt → eksport til JSON / Markdown
 ```
 
-En worker behandler jobbene i bakgrunnen. YouTube kan bruke eksisterende undertekster; TikTok, Instagram og lokale filer bruker lokal transkribering når det trengs. Semantisk indeksering er et separat steg og kan brukes fra CLI-et.
+En worker behandler jobbene i bakgrunnen. YouTube kan bruke eksisterende undertekster; TikTok, Instagram og lokale filer bruker lokal transkribering når det trengs. GitHub-repos hentes som tekst via GitHub API-et (repo-oversikt, README, markdown-dokumentasjon, filstruktur og utvalgte kildefiler); innsikter peker da på filstier i stedet for tidsstempler. Semantisk indeksering er et separat steg og kan brukes fra CLI-et.
 
 ## Kom i gang
 

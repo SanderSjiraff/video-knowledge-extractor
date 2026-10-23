@@ -35,7 +35,7 @@ def extract_video_id(url: str) -> str | None:
 
 
 def detect_platform(url: str) -> str | None:
-    """Return the platform for a URL: 'youtube', 'tiktok', 'instagram', or None."""
+    """Return the platform for a URL: 'youtube', 'tiktok', 'instagram', 'github', or None."""
     parsed = urlparse(url if "://" in url else f"https://{url}")
     if parsed.scheme not in {"http", "https"}:
         return None
@@ -46,7 +46,49 @@ def detect_platform(url: str) -> str | None:
         return "tiktok"
     if host in {"instagram.com", "instagr.am"} or host.endswith(".instagram.com"):
         return "instagram"
+    if host in {"github.com", "gist.github.com"}:
+        return "github"
     return None
+
+
+#: github.com first path segments that are product pages, never owners.
+_GITHUB_RESERVED_FIRST_SEGMENTS = {
+    "about", "admin", "collections", "contact", "explore", "features",
+    "help", "login", "logout", "marketplace", "new", "notifications",
+    "orgs", "organizations", "people", "pricing", "pulls", "search",
+    "security", "settings", "site", "signup", "sponsors", "topics",
+    "trending", "users",
+}
+
+
+def parse_github_repo(url: str) -> tuple[str, str] | None:
+    """Return (owner, repo) for a github.com repo URL.
+
+    Accepts the repo root and any sub-page (/blob/..., /tree/..., /issues,
+    ...).  Returns None for URLs that are not a repo page (user pages,
+    topics, marketplaces, gists, ...).
+    """
+    parsed = urlparse(url if "://" in url else f"https://{url}")
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    if host != "github.com":
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    owner, repo = parts[0], parts[1]
+    # github.com/<reserved>/... pages are not repos (topics, marketplace, ...).
+    if owner.lower() in _GITHUB_RESERVED_FIRST_SEGMENTS:
+        return None
+    # Repo names can end in .git (e.g. from git remotes).
+    if repo.endswith(".git"):
+        repo = repo[: -len(".git")]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,39}", owner):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repo):
+        return None
+    return owner, repo
 
 
 def _validate_limit(limit: int | None) -> None:

@@ -147,7 +147,8 @@ def resolve_video(url: str, platform: str) -> Video:
     """Turn a submitted URL (or local file path) into a Video record.
 
     YouTube ids come straight from the URL (metadata is enriched
-    best-effort).  TikTok/Instagram need one yt-dlp metadata call to get a
+    best-effort).  GitHub repos get a stable ``gh-owner-repo`` id straight
+    from the URL.  TikTok/Instagram need one yt-dlp metadata call to get a
     stable id.  Local file paths are hashed into a stable id.
     """
     if platform == "local":
@@ -189,6 +190,25 @@ def resolve_video(url: str, platform: str) -> Video:
             video.status = VideoStatus.DISCOVERED
             video.error_message = None
         return video
+
+    if platform == "github":
+        from .discovery import parse_github_repo
+
+        parsed = parse_github_repo(url)
+        if parsed is None:
+            raise JobAborted("Ikke en gyldig GitHub-repolenke (bruk f.eks. https://github.com/eier/repo)")
+        owner, repo = parsed
+        # Stable, case-insensitive id so the same repo is never duplicated.
+        return Video(
+            video_id=f"gh-{owner.lower()}-{repo.lower()}",
+            title=f"{owner}/{repo}",
+            url=f"https://github.com/{owner}/{repo}",
+            duration_seconds=0,
+            channel="GitHub",
+            playlist_order=0,
+            status=VideoStatus.DISCOVERED,
+            platform="github",
+        )
 
     # tiktok / instagram: stable id via yt-dlp metadata
     meta = _yt_dlp_single_video(url)
@@ -261,7 +281,16 @@ def resolve_video(url: str, platform: str) -> Video:
 
 
 def _stage_transcribe(video: Video, data_dir: Path) -> None:
-    """Fetch a transcript: subtitles first for YouTube, Whisper elsewhere."""
+    """Fetch a transcript: subtitles first for YouTube, repo text for
+    GitHub, Whisper elsewhere."""
+    if video.platform == "github":
+        from .github_sources import GithubError, process_github_repo
+
+        try:
+            process_github_repo(video, data_dir=data_dir)
+        except GithubError as exc:
+            raise JobAborted(str(exc)) from exc
+        return
     if video.platform == "youtube":
         from .transcripts import process_transcripts
 

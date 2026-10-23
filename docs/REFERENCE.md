@@ -44,6 +44,15 @@ Se alle valg med `python src/cli.py --help`. `--limit` må være et positivt hel
 
 `transcribe` er en fullstendig lokal alternativ: den laster ned bare lyden og transkriberer med Whisper, så den fungerer selv når YouTube-undertekst-API-et er IP-blokkert. Resultatene lagres i samme `transcripts`-tabell som `transcripts`, så `analyze` fungerer uendret. På Windows-maskiner uten CUDA-installasjon kan `ctranslate2` kreve cuBLAS/cuDNN-biblioteker; se kommentarene i `requirements.txt`.
 
+### GitHub-repos som kilde
+
+Limp inn en GitHub-repolenke (f.eks. `https://github.com/openai/whisper`) i dashboardet, via Telegram-botten eller API-et, akkurat som en videolenke. Workeren henter da repo-innholdet via GitHub REST API-et og lagrer det som kildekilden "transkript": repo-oversikt (stjerner, språk, lisens, emneord), README, andre markdown-dokumenter, en kompakt filstruktur og de mest informative kildefilene (inngangspunkt og grunnleggende moduler; tester, dependency-trær og binære filer hoppes over). Kildene er budsjettbegrensede slik at ett repo holder seg innenfor noen få analysekall.
+
+- **Stabil ID:** `gh-{eier}-{repo}` (stort/lite-ufølsom) — samme repo legges aldri inn to ganger.
+- **Tidsreferanser blir filstier:** innsikter og nøkkelavsnitt peker på f.eks. `src/main.py` i stedet for MM:SS; sitatverifisering mot kildeteksten fungerer ellers uendret.
+- **Rate-limit:** Uten token: 60 API-kall/time per IP (plenty for å legge inn et repo nå og da). Sett `GITHUB_TOKEN` i `.env` for 5000 kall/time og private repos.
+- **Kun offentlige repos** uten token; private repos krever token med `repo`-scope.
+
 ## Kostnader og begrensninger
 
 - Uten `--limit` kjøres opptil `DRY_RUN_LIMIT` videoer, normalt 5. Dette er **ekte analyse og ekte modellkall**, selv om eldre meldinger omtaler det som «dry-run».

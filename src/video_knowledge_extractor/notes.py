@@ -53,6 +53,7 @@ def _source_label(video: Video) -> str:
         "youtube": "Se på YouTube",
         "tiktok": "Se på TikTok",
         "instagram": "Se på Instagram",
+        "github": "Åpne på GitHub",
     }.get(video.platform or "youtube", "Åpne kilde")
 
 
@@ -112,8 +113,9 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
     lines.append("")
     lines.append(f"# {video.title or video.video_id}")
     lines.append("")
-    lines.append(f"- **Kanal:** {video.channel or '—'}")
-    lines.append(f"- **Varighet:** {video.duration_formatted}")
+    lines.append(f"- **Kilde:** {video.channel or '—'}")
+    if (video.platform or "youtube") != "github":
+        lines.append(f"- **Varighet:** {video.duration_formatted}")
     if analysis.recommendation:
         lines.append(
             f"- **Anbefaling:** {analysis.recommendation} — {analysis.recommendation_justification}"
@@ -139,7 +141,8 @@ def video_to_markdown(video: Video, analysis: VideoAnalysis) -> str:
             mark = _confidence_mark(ins.verified, ins.confidence, bool(ins.quote))
             ts_link = ""
             if ins.timestamp:
-                ts_link = f" [⏱ {ins.timestamp}]({source_link(video, ins.timestamp)})"
+                icon = "📄" if (video.platform or "youtube") == "github" else "⏱"
+                ts_link = f" [{icon} {ins.timestamp}]({source_link(video, ins.timestamp)})"
             head = f"{n}. **{ins.insight}**{ts_link}"
             if mark:
                 head += f" {mark}"
@@ -222,9 +225,9 @@ def playlist_overview_markdown(
             lines.append("**Felles tema:** " + ", ".join(shared))
             lines.append("")
 
-    lines.append("## Videolisten")
+    lines.append("## Kildelista")
     lines.append("")
-    lines.append("| # | Tittel | Kanal | Anbefaling | Verdi |")
+    lines.append("| # | Tittel | Kilde | Anbefaling | Verdi |")
     lines.append("|---|--------|-------|------------|-------|")
     for rank, (vid, score) in enumerate(ranked, 1):
         v = video_by_id.get(vid)
