@@ -288,6 +288,123 @@ def fetch_repo_content(
     return meta, sections
 
 
+_FONT_CANDIDATES = (
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+_BOLD_CANDIDATES = (
+    "C:/Windows/Fonts/segoeui-bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+)
+
+
+def _load_font(size: int, bold: bool = False):
+    from PIL import ImageFont
+
+    for path in (_BOLD_CANDIDATES if bold else _FONT_CANDIDATES):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:  # very old Pillow
+        return ImageFont.load_default()
+
+
+def _draw_star(draw, cx: float, cy: float, r_outer: float, r_inner: float, fill: str) -> None:
+    """Draw a five-pointed star centred at (cx, cy)."""
+    import math
+
+    points = []
+    for i in range(10):
+        r = r_outer if i % 2 == 0 else r_inner
+        angle = -math.pi / 2 + i * math.pi / 5
+        points.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+    draw.polygon(points, fill=fill)
+
+
+def _wrap_lines(draw, text: str, font, max_width: int, max_lines: int) -> list[str]:
+    """Greedy word wrap; extra lines are folded into an ellipsis."""
+    words = (text or "").replace("\r", " ").replace("\n", " ").split()
+    lines: list[str] = []
+    line = ""
+    for w in words:
+        trial = f"{line} {w}".strip()
+        if not line or draw.textlength(trial, font=font) <= max_width:
+            line = trial
+        else:
+            lines.append(line)
+            line = w
+    if line:
+        lines.append(line)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and draw.textlength(last + "…", font=font) > max_width:
+            last = last[:-1]
+        lines[-1] = last.rstrip() + "…"
+    return lines
+
+
+def make_repo_thumbnail(video: Video, meta: dict[str, Any], thumb_dir: Path) -> Path | None:
+    """Render a 320x180 "card" thumbnail for a repo (same slot as video thumbs).
+
+    Best-effort: returns None on any rendering failure.
+    """
+    from PIL import Image, ImageDraw
+
+    W, H = 320, 180
+    img = Image.new("RGB", (W, H), "#24292f")
+    draw = ImageDraw.Draw(img)
+
+    f_small = _load_font(11)
+    f_title = _load_font(19, bold=True)
+    f_desc = _load_font(11)
+
+    # Top row: git-branch icon + "GitHub"
+    draw.ellipse((16, 12, 24, 20), outline="#8b949e", width=2)
+    draw.ellipse((16, 26, 24, 34), outline="#8b949e", width=2)
+    draw.ellipse((30, 12, 38, 20), outline="#8b949e", width=2)
+    draw.line((20, 20, 20, 26), fill="#8b949e", width=2)
+    draw.line((20, 16, 30, 16), fill="#8b949e", width=2)
+    draw.text((44, 13), "GitHub", font=f_small, fill="#8b949e")
+
+    # Title: owner/repo (max two lines)
+    title = meta.get("full_name") or video.title or video.video_id
+    t_lines = _wrap_lines(draw, title, f_title, W - 32, 2)
+    y = 44
+    for ln in t_lines:
+        draw.text((16, y), ln, font=f_title, fill="#ffffff")
+        y += 24
+
+    # Description (max two lines)
+    d_lines = _wrap_lines(draw, meta.get("description") or "", f_desc, W - 32, 2)
+    y = y + 4
+    for ln in d_lines:
+        draw.text((16, y), ln, font=f_desc, fill="#8b949e")
+        y += 15
+
+    # Bottom row: stars left, language right
+    stars = meta.get("stargazers_count")
+    if stars:
+        _draw_star(draw, 22, H - 18, r_outer=7, r_inner=3, fill="#e3b341")
+        draw.text((34, H - 24), f"{stars:,}", font=f_desc, fill="#e3b341")
+    language = meta.get("language")
+    if language:
+        lw = draw.textlength(language, font=f_desc)
+        draw.text((W - 16 - lw, H - 24), language, font=f_desc, fill="#8b949e")
+
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    out = thumb_dir / f"{video.video_id}.jpg"
+    img.save(out, "JPEG", quality=88)
+    return out
+
+
 def process_github_repo(video: Video, data_dir: Path = Path("data")) -> Transcript:
     """Fetch the repo behind *video.url* and store its content as a transcript.
 
@@ -312,6 +429,11 @@ def process_github_repo(video: Video, data_dir: Path = Path("data")) -> Transcri
     video.url = f"https://github.com/{owner}/{repo}"
     video.duration_seconds = 0
     save_video(video, data_dir=data_dir)
+    # Best-effort card thumbnail (same slot the dashboard uses for videos).
+    try:
+        make_repo_thumbnail(video, meta, Config.THUMBS_DIR)
+    except Exception:  # noqa: BLE001 - a missing thumbnail must not kill the job
+        pass
 
     segments: list[TranscriptSegment] = []
     for idx, (label, text) in enumerate(sections):

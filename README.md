@@ -152,7 +152,7 @@ For å se eksisterende data uten å starte behandling kan du kjøre `python src/
 
 ### 5. Legg til din første video
 
-1. Åpne **Oversikt**, og lim inn én støttet videolenke per linje, eller velg **Last opp filer**.
+1. Åpne **Oversikt**, og lim inn én støttet lenke per linje — YouTube, TikTok, Instagram eller en **GitHub-repo** — eller velg **Last opp filer**.
 2. Trykk **Analyser videoer**. Standardløpet bruker transkribering, analyse og embeddings; OCR og visjon er av som standard for vanlige videoer.
 3. Følg fremdriften i **Kø**. Worker-en må kjøre for at køen skal gå videre.
 4. Åpne **Bibliotek** for søk, filtrering og analyse av en video.
@@ -182,7 +182,7 @@ Opprett en bot med `@BotFather`, og fyll inn `TELEGRAM_BOT_TOKEN` og ditt numeri
 python src/cli.py bot
 ```
 
-La også worker-en kjøre, for eksempel via `platform`. Send en lenke eller fil til boten. Kommandoer: `/status`, `/search <ord>` og `/cost`. Filopplasting er begrenset til omtrent 19 MB. Botten bruker long polling og trenger ingen offentlig serveradresse.
+La også worker-en kjøre, for eksempel via `platform`. Send en videolenke, GitHub-repo eller fil til boten. Kommandoer: `/status`, `/search <ord>` og `/cost`. Filopplasting er begrenset til omtrent 19 MB. Botten bruker long polling og trenger ingen offentlig serveradresse.
 
 ### Kommandolinje
 

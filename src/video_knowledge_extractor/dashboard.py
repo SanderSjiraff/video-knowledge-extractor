@@ -749,7 +749,7 @@ def _overview():
             )
             urls = st.text_area(
                 "URLer",
-                placeholder="Én videolenke per linje",
+                placeholder="Én lenke per linje (YouTube, TikTok, Instagram eller GitHub-repo)",
                 label_visibility="collapsed",
                 height=102,
                 key="ov_u",

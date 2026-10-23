@@ -264,6 +264,26 @@ def test_worker_resolves_github_url() -> None:
         resolve_video("https://github.com/only-owner", "github")
 
 
+def test_make_repo_thumbnail_creates_jpg(tmp_path) -> None:
+    video = _github_video()
+    out = github_sources.make_repo_thumbnail(video, META, tmp_path)
+    assert out is not None
+    assert out.name == "gh-o-r.jpg"
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_wrap_lines_truncates_with_ellipsis() -> None:
+    from PIL import Image, ImageDraw
+
+    from video_knowledge_extractor.github_sources import _load_font, _wrap_lines
+
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    font = _load_font(12)
+    lines = _wrap_lines(draw, "word " * 50, font, 100, 2)
+    assert len(lines) == 2
+    assert lines[1].endswith("…")
+
+
 def test_analysis_prompt_github_wording() -> None:
     transcript = Transcript(
         video_id="gh-o-r",
