@@ -3,7 +3,7 @@ yt-dlp>=2026.10.21
 # extractors ("Unexpected response from webpage request" without it).
 curl_cffi>=0.7.0
 youtube-transcript-api>=1.2.4,<2
-streamlit>=1.39.0
+streamlit>=1.65.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
 python-telegram-bot>=21.0

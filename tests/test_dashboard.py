@@ -2,6 +2,8 @@
 from pathlib import Path
 import sys
 
+import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -10,10 +12,20 @@ from video_knowledge_extractor.db import init_db, save_video, save_transcript, g
 from video_knowledge_extractor.models import Video, Transcript, TranscriptSegment
 
 
-def test_library_search_and_navigation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("ranking_open", [False, True])
+def test_library_search_and_navigation(tmp_path, monkeypatch, ranking_open):
     dashboard = Path(__file__).resolve().parents[1] / "src/video_knowledge_extractor/dashboard.py"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(Config, "DATA_DIR", tmp_path / "data")
+    expander = st.expander
+
+    def ranking_expander(label, *args, **kwargs):
+        # AppTest 1.65 cannot toggle expanders; start in each real UI state instead.
+        if kwargs.get("key") == "full_ranking":
+            kwargs["expanded"] = ranking_open
+        return expander(label, *args, **kwargs)
+
+    monkeypatch.setattr(st, "expander", ranking_expander)
     init_db(data_dir=Config.DATA_DIR)
     for i in range(10):
         save_video(Video(str(i), f"Video {i}", "https://youtu.be/example", 90, "Testkanal", i), data_dir=Config.DATA_DIR)
@@ -56,9 +68,11 @@ def test_library_search_and_navigation(tmp_path, monkeypatch):
     assert not app.exception
     assert app.session_state.page == "innsikt"
     assert any("Et unikt sammendrag for analysevinduet" in m.value for m in app.markdown)
-    app.session_state.full_ranking = True
-    app.run()
-    app.button(key="rank_None_0").click().run()
-    assert not app.exception
-    assert app.session_state.full_ranking is True
-    assert app.session_state.page == "innsikt"
+    assert app.session_state.full_ranking is ranking_open
+    if ranking_open:
+        app.button(key="rank_None_0").click().run()
+        assert not app.exception
+        assert app.session_state.full_ranking is True
+        assert app.session_state.page == "innsikt"
+    else:
+        assert not any(b.key == "rank_None_0" for b in app.button)
